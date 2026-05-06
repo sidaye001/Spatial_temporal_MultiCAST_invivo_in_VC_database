@@ -26,12 +26,12 @@ COFIT_DIR = os.path.join(DATA_DIR, "cofitness")
 
 SPEARMAN_FILE = os.path.join(
     COFIT_DIR,
-    "cofitness_correlation_matrix_spearman.csv"
+    "cofitness_correlation_matrix_spearman.csv.gz"
 )
 
 PEARSON_FILE = os.path.join(
     COFIT_DIR,
-    "cofitness_correlation_matrix_pearson.csv"
+    "cofitness_correlation_matrix_pearson.csv.gz"
 )
 
 OLD_SINGLE_MATRIX_FILE = os.path.join(
