@@ -1,0 +1,7 @@
+locus_ID,gene,category,Color
+N900_RS01905,mlaF,mla pathway,red
+N900_RS01910,mlaE,mla pathway,red
+N900_RS01915,mlaD,mla pathway,red
+N900_RS01920,mlaC,mla pathway,red
+N900_RS04175,mlaA,mla pathway,red
+N900_RS11470,ompU,ompU,green

@@ -1,0 +1,19 @@
+locus_ID,gene,category,Color,gene_name,product,candidate_role,evidence_from_annotation
+N900_RS13335,manA,Perosamine biosynthesis,Red,manA_1,,candidate O-antigen precursor synthesis,PMI; included because manA can extend the O1 O-antigen locus
+N900_RS13365,wbeW,Repeat unit assembly,Orange,epsL,sugar transferase,candidate glycosyltransferase / repeat-unit assembly,generic sugar transferase in the contiguous locus
+N900_RS13370,galE,O-antigen precursor metabolism,#FFCCCB,gnu,SDR family oxidoreductase,candidate sugar-pathway oxidoreductase,oxidoreductase in the contiguous locus
+N900_RS13375,wbeV,Repeat unit assembly,Orange,pglF,polysaccharide biosynthesis protein,candidate polysaccharide biosynthesis enzyme,polysaccharide biosynthesis protein in the contiguous locus
+N900_RS13380,wbeU,Repeat unit assembly,Orange,rfbV,glycosyltransferase,O-antigen biosynthesis,named rfbV
+N900_RS13385,wbeT,Serotype modification,#008080,FkbM family methyltransferase,FkbM family methyltransferase,candidate O-antigen modification,methyltransferase in the contiguous locus
+N900_RS13400,wbeO,Tetronate biosynthesis,Green,vioB,acetyltransferase,candidate acetylation/modification,acetyltransferase in the contiguous locus
+N900_RS13405,wbeN,Tetronate biosynthesis,Green,rfbN,acyl-CoA reductase,O-antigen biosynthesis,named rfbN
+N900_RS13410,wbeM,Tetronate biosynthesis,Green,iron-containing alcohol dehydrogenase_2,iron-containing alcohol dehydrogenase,candidate sugar-pathway reductase/dehydrogenase,dehydrogenase in the contiguous locus
+N900_RS13415,wbeL,Tetronate biosynthesis,Green,rfbL,AMP-binding protein,O-antigen biosynthesis,named rfbL
+N900_RS13420,wbeK,Tetronate biosynthesis,Green,acyl carrier protein,acyl carrier protein,candidate tetronate/acyl side-chain biosynthesis,ACP in contiguous locus
+N900_RS13425,wzt,O antigen transport,Yellow,ABC transporter ATP-binding protein_3,ABC transporter ATP-binding protein,candidate O-antigen transport,ABC ATPase in contiguous locus
+N900_RS13430,wzm,O antigen transport,Yellow,ABC transporter permease_6,ABC transporter permease,candidate O-antigen transport,ABC permease in contiguous locus
+N900_RS13435,wbeG,Sugar modification,#98FB98,rfbG,glycosyltransferase,O-antigen biosynthesis,named rfbG
+N900_RS13440,wbeE,Perosamine biosynthesis,Red,rfbE,DegT/DnrJ/EryC1/StrS family aminotransferase,O-antigen biosynthesis,named rfbE
+N900_RS13445,gmd,Perosamine biosynthesis,Red,gmd,gmd,perosamine / O-antigen precursor synthesis,named gmd
+N900_RS13450,manB,Perosamine biosynthesis,Red,algC,phosphomannomutase/phosphoglucomutase,perosamine / O-antigen precursor synthesis,phosphomannomutase/phosphoglucomutase; manB-like function candidate
+N900_RS13455,manC,Perosamine biosynthesis,Red,manC1,mannose-1-phosphate guanylyltransferase/mannose-6-phosphate isomerase,perosamine / O-antigen precursor synthesis,bifunctional GMP/PMI annotation

@@ -1,0 +1,39 @@
+body {
+    background-color: #f8f9fa;
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+.main-container {
+    padding-top: 28px;
+    padding-left: 40px;
+    padding-right: 40px;
+}
+
+.page-title {
+    font-weight: 700;
+    margin-bottom: 16px;
+}
+
+.lead {
+    font-size: 1.1rem;
+    color: #4f4f4f;
+}
+
+.summary-card {
+    min-height: 150px;
+    border-radius: 16px;
+    border: 1px solid #e5e5e5;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+}
+
+.summary-card:hover {
+    transform: translateY(-2px);
+    transition: 0.2s ease;
+}
+
+.info-box {
+    background: white;
+    border-radius: 16px;
+    padding: 24px;
+    border: 1px solid #e5e5e5;
+}

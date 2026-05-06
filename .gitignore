@@ -1,0 +1,43 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Mac system files
+.DS_Store
+
+# Backup files
+*~
+*.bak
+*.tmp
+
+# Virtual environments
+venv/
+.env/
+.venv/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# Local IDE files
+.vscode/
+.idea/
+
+# Large generated outputs, if any
+Output/
+output/
+outputs/
+
+# Optional: uncomment these if your data files are too large for GitHub
+# data/raw/
+# data/cofitness/
+# data/network/
+# data/clustering/
+
+# Large cofitness matrices; upload directly to server, not GitHub
+data/cofitness/cofitness_correlation_matrix__pearson.csv
+data/cofitness/cofitness_correlation_matrix_spearman.csv
