@@ -64,7 +64,7 @@ CONDITION_ORDER = [
 ]
 
 # Brown/blue diverging scale with narrow white center.
-# This makes the color transition faster and avoids a wide white neutral range.
+# Negative Beta = blue, positive Beta = brown/red.
 NARROW_WHITE_BROWN_BLUE = [
     [0.00, "#08306B"],
     [0.18, "#2171B5"],
@@ -266,6 +266,38 @@ def resolve_gene_list(tokens):
     return found, missing
 
 
+def safe_file_label(label):
+    return (
+        str(label)
+        .replace(" ", "_")
+        .replace("/", "_")
+        .replace("\\", "_")
+        .replace(":", "_")
+        .replace("|", "_")
+        .replace(",", "_")
+    )
+
+
+def validate_time_space_selection(selected_times, selected_spaces):
+    if not selected_times:
+        selected_times = TIME_LEVELS.copy()
+    if not selected_spaces:
+        selected_spaces = SPACE_LEVELS.copy()
+
+    selected_times = [t for t in selected_times if t in TIME_LEVELS]
+    selected_spaces = [s for s in selected_spaces if s in SPACE_LEVELS]
+
+    selected_times = [t for t in TIME_LEVELS if t in selected_times]
+    selected_spaces = [s for s in SPACE_LEVELS if s in selected_spaces]
+
+    if len(selected_times) == 0:
+        selected_times = TIME_LEVELS.copy()
+    if len(selected_spaces) == 0:
+        selected_spaces = SPACE_LEVELS.copy()
+
+    return selected_times, selected_spaces
+
+
 # ============================================================
 # 2. Gene set loading
 # ============================================================
@@ -401,19 +433,169 @@ def get_gene_set_inputs(gene_set_file, manual_text, upload_contents, upload_file
     return gene_ids, missing, gene_set_label
 
 
+def make_gene_set_plot_label(gene_name, gene_id):
+    """
+    Make a unique y-axis label for Module 2 plots.
+    Plotly collapses heatmap rows when categorical y labels are duplicated.
+    Using GeneName | Gene prevents genes with the same symbol/name from being overplotted.
+    """
+    gene_name = str(gene_name).strip() if pd.notna(gene_name) else ""
+    gene_id = str(gene_id).strip()
+
+    if gene_name == "" or gene_name == gene_id:
+        return gene_id
+
+    return f"{gene_name} | {gene_id}"
+
+
 # ============================================================
-# 3. Single gene spatial-temporal plot
+# 3. Single gene spatial-temporal plot and table
 # ============================================================
 
-def make_single_gene_surface_contour(gene_id):
+def get_single_gene_landscape_table(gene_id, selected_times=None, selected_spaces=None):
+    selected_times, selected_spaces = validate_time_space_selection(
+        selected_times,
+        selected_spaces,
+    )
+
     raw = load_raw_data()
     sub = raw[raw["Gene"] == gene_id].copy()
 
     if sub.empty:
         raise ValueError(f"Gene not found in raw data: {gene_id}")
 
-    sub["Time"] = pd.Categorical(sub["Time"].astype(str), categories=TIME_LEVELS, ordered=True)
-    sub["Space"] = pd.Categorical(sub["Space"].astype(str), categories=SPACE_LEVELS, ordered=True)
+    sub = sub[sub["Time"].astype(str).isin(selected_times)].copy()
+    sub = sub[sub["Space"].astype(str).isin(selected_spaces)].copy()
+
+    if sub.empty:
+        raise ValueError(
+            f"Gene {gene_id} was found, but no Beta values were found in the selected time/space window."
+        )
+
+    sub = add_annotation(sub)
+
+    sub["Time"] = pd.Categorical(
+        sub["Time"].astype(str),
+        categories=selected_times,
+        ordered=True,
+    )
+    sub["Space"] = pd.Categorical(
+        sub["Space"].astype(str),
+        categories=selected_spaces,
+        ordered=True,
+    )
+    sub["Condition"] = sub["Time"].astype(str) + "_" + sub["Space"].astype(str)
+
+    out = (
+        sub[["Gene", "GeneName", "Time", "Space", "Condition", "Beta"]]
+        .sort_values(["Time", "Space"])
+        .copy()
+    )
+
+    out["Time"] = out["Time"].astype(str)
+    out["Space"] = out["Space"].astype(str)
+
+    return out
+
+
+def summarize_single_gene_landscape(gene_id, selected_times=None, selected_spaces=None):
+    selected_times, selected_spaces = validate_time_space_selection(
+        selected_times,
+        selected_spaces,
+    )
+
+    table = get_single_gene_landscape_table(
+        gene_id,
+        selected_times=selected_times,
+        selected_spaces=selected_spaces,
+    )
+
+    finite = table[np.isfinite(pd.to_numeric(table["Beta"], errors="coerce"))].copy()
+    finite["Beta"] = pd.to_numeric(finite["Beta"], errors="coerce")
+
+    if finite.empty:
+        raise ValueError(f"No finite Beta values found for gene {gene_id} in the selected window.")
+
+    gene_name = finite["GeneName"].iloc[0]
+    display_label = f"{gene_name} | {gene_id}"
+
+    max_row = finite.loc[finite["Beta"].idxmax()]
+    min_row = finite.loc[finite["Beta"].idxmin()]
+
+    time_summary = (
+        finite
+        .groupby("Time", observed=False)["Beta"]
+        .agg(["mean", "min", "max"])
+        .reindex(selected_times)
+        .reset_index()
+    )
+
+    space_summary = (
+        finite
+        .groupby("Space", observed=False)["Beta"]
+        .agg(["mean", "min", "max"])
+        .reindex(selected_spaces)
+        .reset_index()
+    )
+
+    global_summary = pd.DataFrame(
+        [
+            {
+                "Gene": gene_id,
+                "GeneName": gene_name,
+                "SelectedTimes": ", ".join(selected_times),
+                "SelectedSpaces": ", ".join(selected_spaces),
+                "n_conditions": int(finite.shape[0]),
+                "mean_Beta": finite["Beta"].mean(),
+                "median_Beta": finite["Beta"].median(),
+                "sd_Beta": finite["Beta"].std(),
+                "min_Beta": finite["Beta"].min(),
+                "min_Time": min_row["Time"],
+                "min_Space": min_row["Space"],
+                "max_Beta": finite["Beta"].max(),
+                "max_Time": max_row["Time"],
+                "max_Space": max_row["Space"],
+                "range_Beta": finite["Beta"].max() - finite["Beta"].min(),
+                "n_positive_Beta": int((finite["Beta"] > 0).sum()),
+                "n_negative_Beta": int((finite["Beta"] < 0).sum()),
+            }
+        ]
+    )
+
+    return {
+        "table": table,
+        "finite": finite,
+        "display_label": display_label,
+        "max_row": max_row,
+        "min_row": min_row,
+        "time_summary": time_summary,
+        "space_summary": space_summary,
+        "global_summary": global_summary,
+        "selected_times": selected_times,
+        "selected_spaces": selected_spaces,
+    }
+
+
+def make_single_gene_surface_contour(
+    gene_id,
+    show_contour_lines="show",
+    selected_times=None,
+    selected_spaces=None,
+):
+    selected_times, selected_spaces = validate_time_space_selection(
+        selected_times,
+        selected_spaces,
+    )
+
+    landscape = summarize_single_gene_landscape(
+        gene_id,
+        selected_times=selected_times,
+        selected_spaces=selected_spaces,
+    )
+    sub = landscape["finite"].copy()
+    display_label = landscape["display_label"]
+    max_row = landscape["max_row"]
+    min_row = landscape["min_row"]
 
     pivot = (
         sub
@@ -422,31 +604,28 @@ def make_single_gene_surface_contour(gene_id):
             columns="Time",
             values="Beta",
             aggfunc="mean",
-            observed=False
+            observed=False,
         )
-        .reindex(index=SPACE_LEVELS, columns=TIME_LEVELS)
+        .reindex(index=selected_spaces, columns=selected_times)
     )
 
     z = pivot.values.astype(float)
 
     if np.isnan(z).all():
-        raise ValueError(f"No finite Beta values found for gene: {gene_id}")
+        raise ValueError(f"No finite Beta values found for gene {gene_id} in the selected window.")
 
     z_plot = pd.DataFrame(z).interpolate(axis=0).interpolate(axis=1).fillna(0).values
 
-    min_idx = np.unravel_index(np.nanargmin(z_plot), z_plot.shape)
-    max_idx = np.unravel_index(np.nanargmax(z_plot), z_plot.shape)
+    max_time = str(max_row["Time"])
+    max_space = str(max_row["Space"])
+    max_beta = float(max_row["Beta"])
 
-    min_space = SPACE_LEVELS[min_idx[0]]
-    min_time = TIME_LEVELS[min_idx[1]]
-    min_beta = z_plot[min_idx]
+    min_time = str(min_row["Time"])
+    min_space = str(min_row["Space"])
+    min_beta = float(min_row["Beta"])
 
-    max_space = SPACE_LEVELS[max_idx[0]]
-    max_time = TIME_LEVELS[max_idx[1]]
-    max_beta = z_plot[max_idx]
-
-    gene_name = get_gene_name(gene_id)
-    display_label = f"{gene_name} | {gene_id}"
+    selected_time_nums = [TIME_NUM_MAP[t] for t in selected_times]
+    selected_space_nums = [SPACE_NUM_MAP[s] for s in selected_spaces]
 
     fig = make_subplots(
         rows=1,
@@ -454,21 +633,23 @@ def make_single_gene_surface_contour(gene_id):
         specs=[[{"type": "surface"}, {"type": "xy"}]],
         subplot_titles=[
             f"3D Fitness Surface: {display_label}",
-            f"Contour Map: {display_label}"
+            f"Contour Map: {display_label}",
         ],
-        horizontal_spacing=0.08,
+        horizontal_spacing=0.10,
     )
 
     fig.add_trace(
         go.Surface(
-            x=[TIME_NUM_MAP[t] for t in TIME_LEVELS],
-            y=list(range(1, len(SPACE_LEVELS) + 1)),
+            x=selected_time_nums,
+            y=selected_space_nums,
             z=z_plot,
             colorscale=NARROW_WHITE_BROWN_BLUE,
             colorbar=dict(
                 title="Beta",
-                x=0.43,
-                len=0.7,
+                x=0.44,
+                y=0.50,
+                len=0.68,
+                thickness=14,
             ),
             contours={
                 "z": {
@@ -483,7 +664,9 @@ def make_single_gene_surface_contour(gene_id):
                 "Space index: %{y}<br>"
                 "Beta: %{z:.3f}<extra></extra>"
             ),
+            name="3D surface",
             showscale=True,
+            showlegend=False,
         ),
         row=1,
         col=1,
@@ -491,37 +674,49 @@ def make_single_gene_surface_contour(gene_id):
 
     fig.add_trace(
         go.Heatmap(
-            x=TIME_LEVELS,
-            y=SPACE_LEVELS,
+            x=selected_times,
+            y=selected_spaces,
             z=z_plot,
             colorscale=NARROW_WHITE_BROWN_BLUE,
-            colorbar=dict(title="Beta", x=1.02),
+            colorbar=dict(
+                title="Beta",
+                x=1.065,
+                y=0.50,
+                len=0.68,
+                thickness=14,
+            ),
             hovertemplate=(
                 "Time: %{x}<br>"
                 "Space: %{y}<br>"
                 "Beta: %{z:.3f}<extra></extra>"
             ),
+            name="Beta heatmap",
+            showscale=True,
+            showlegend=False,
         ),
         row=1,
         col=2,
     )
 
-    fig.add_trace(
-        go.Contour(
-            x=TIME_LEVELS,
-            y=SPACE_LEVELS,
-            z=z_plot,
-            contours=dict(
-                coloring="none",
-                showlabels=False,
+    if show_contour_lines == "show":
+        fig.add_trace(
+            go.Contour(
+                x=selected_times,
+                y=selected_spaces,
+                z=z_plot,
+                contours=dict(
+                    coloring="none",
+                    showlabels=False,
+                ),
+                line=dict(color="black", width=1.2),
+                showscale=False,
+                hoverinfo="skip",
+                name="Contour lines",
+                showlegend=False,
             ),
-            line=dict(color="black", width=1.5),
-            showscale=False,
-            hoverinfo="skip",
-        ),
-        row=1,
-        col=2,
-    )
+            row=1,
+            col=2,
+        )
 
     fig.add_trace(
         go.Scatter(
@@ -531,7 +726,7 @@ def make_single_gene_surface_contour(gene_id):
             marker=dict(size=12, color="yellow", line=dict(color="black", width=1)),
             text=[f"Max: {max_beta:.2f}"],
             textposition="top center",
-            textfont=dict(color="yellow", size=14),
+            textfont=dict(color="yellow", size=13),
             name="Maximum Beta",
             hovertemplate=(
                 f"Maximum Beta<br>Time: {max_time}<br>"
@@ -551,7 +746,7 @@ def make_single_gene_surface_contour(gene_id):
             marker=dict(size=12, color="lime", line=dict(color="black", width=1)),
             text=[f"Min: {min_beta:.2f}"],
             textposition="bottom center",
-            textfont=dict(color="lime", size=14),
+            textfont=dict(color="lime", size=13),
             name="Minimum Beta",
             hovertemplate=(
                 f"Minimum Beta<br>Time: {min_time}<br>"
@@ -567,14 +762,14 @@ def make_single_gene_surface_contour(gene_id):
         xaxis=dict(
             title="Time",
             tickmode="array",
-            tickvals=[TIME_NUM_MAP[t] for t in TIME_LEVELS],
-            ticktext=TIME_LEVELS,
+            tickvals=selected_time_nums,
+            ticktext=selected_times,
         ),
         yaxis=dict(
             title="Space",
             tickmode="array",
-            tickvals=list(range(1, len(SPACE_LEVELS) + 1)),
-            ticktext=SPACE_LEVELS,
+            tickvals=selected_space_nums,
+            ticktext=selected_spaces,
         ),
         zaxis=dict(title="Beta"),
         camera=dict(eye=dict(x=1.8, y=1.5, z=1.1)),
@@ -586,7 +781,7 @@ def make_single_gene_surface_contour(gene_id):
     fig.update_yaxes(
         title_text="Space",
         categoryorder="array",
-        categoryarray=SPACE_LEVELS,
+        categoryarray=selected_spaces,
         row=1,
         col=2,
     )
@@ -594,8 +789,9 @@ def make_single_gene_surface_contour(gene_id):
     fig.update_layout(
         template="plotly_white",
         height=720,
-        margin=dict(l=30, r=40, t=90, b=40),
+        margin=dict(l=30, r=120, t=90, b=40),
         title=f"Spatial-temporal in vivo fitness landscape for {display_label}",
+        showlegend=False,
     )
 
     summary = dbc.Alert(
@@ -604,37 +800,241 @@ def make_single_gene_surface_contour(gene_id):
             html.Br(),
             f"Query gene: {display_label}",
             html.Br(),
+            f"Selected timepoints: {', '.join(selected_times)}",
+            html.Br(),
+            f"Selected spaces: {', '.join(selected_spaces)}",
+            html.Br(),
             f"Maximum Beta: {max_beta:.3f} at {max_time}, {max_space}",
             html.Br(),
             f"Minimum Beta: {min_beta:.3f} at {min_time}, {min_space}",
             html.Br(),
+            f"Mean Beta across selected conditions: {landscape['global_summary']['mean_Beta'].iloc[0]:.3f}",
+            html.Br(),
             html.Span(
                 "The 3D surface and 2D contour map show how the fitness coefficient changes "
-                "across infection time and intestinal location."
+                "across the selected infection time and gastrointestinal (GI) tract-location window. The downloadable "
+                "table below reports the full long-format single-gene landscape and summary statistics."
             ),
         ],
         color="info",
         className="mb-3",
     )
 
-    return fig, summary
+    return fig, summary, landscape
 
+
+def make_single_gene_table_component(landscape):
+    long_table = landscape["table"].copy()
+    long_table["Beta"] = pd.to_numeric(long_table["Beta"], errors="coerce").round(4)
+
+    global_summary = landscape["global_summary"].copy()
+    for col in ["mean_Beta", "median_Beta", "sd_Beta", "min_Beta", "max_Beta", "range_Beta"]:
+        global_summary[col] = pd.to_numeric(global_summary[col], errors="coerce").round(4)
+
+    time_summary = landscape["time_summary"].copy()
+    space_summary = landscape["space_summary"].copy()
+
+    for df in [time_summary, space_summary]:
+        for col in ["mean", "min", "max"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce").round(4)
+
+    return html.Div(
+        [
+            html.H5("Single-gene landscape summary table for selected window"),
+
+            dash_table.DataTable(
+                data=global_summary.to_dict("records"),
+                columns=[{"name": c, "id": c} for c in global_summary.columns],
+                page_size=5,
+                style_table={"overflowX": "auto"},
+                style_cell={
+                    "textAlign": "left",
+                    "fontFamily": "Arial",
+                    "fontSize": "13px",
+                    "padding": "6px",
+                    "minWidth": "100px",
+                    "whiteSpace": "normal",
+                },
+                style_header={
+                    "fontWeight": "bold",
+                    "backgroundColor": "#f1f3f5",
+                },
+            ),
+
+            dbc.Row(
+                [
+                    dbc.Col(
+                        [
+                            html.H6("Time-window summary", className="mt-4"),
+                            dash_table.DataTable(
+                                data=time_summary.to_dict("records"),
+                                columns=[{"name": c, "id": c} for c in time_summary.columns],
+                                page_size=10,
+                                style_table={"overflowX": "auto"},
+                                style_cell={
+                                    "textAlign": "left",
+                                    "fontFamily": "Arial",
+                                    "fontSize": "13px",
+                                    "padding": "6px",
+                                    "minWidth": "80px",
+                                },
+                                style_header={
+                                    "fontWeight": "bold",
+                                    "backgroundColor": "#f1f3f5",
+                                },
+                            ),
+                        ],
+                        md=6,
+                    ),
+                    dbc.Col(
+                        [
+                            html.H6("Space-window summary", className="mt-4"),
+                            dash_table.DataTable(
+                                data=space_summary.to_dict("records"),
+                                columns=[{"name": c, "id": c} for c in space_summary.columns],
+                                page_size=15,
+                                style_table={"overflowX": "auto"},
+                                style_cell={
+                                    "textAlign": "left",
+                                    "fontFamily": "Arial",
+                                    "fontSize": "13px",
+                                    "padding": "6px",
+                                    "minWidth": "80px",
+                                },
+                                style_header={
+                                    "fontWeight": "bold",
+                                    "backgroundColor": "#f1f3f5",
+                                },
+                            ),
+                        ],
+                        md=6,
+                    ),
+                ]
+            ),
+
+            # The condition-level single-gene table is intentionally not displayed on the page.
+            # It is still included in the downloadable CSV generated by make_single_gene_download_table().
+
+            dbc.Button(
+                "Download single-gene fitness landscape table",
+                id="desc-download-single-gene-table-button",
+                color="secondary",
+                className="mt-3 mb-4",
+            ),
+        ],
+        className="mb-4",
+    )
+
+
+def make_single_gene_download_table(gene_id, selected_times=None, selected_spaces=None):
+    selected_times, selected_spaces = validate_time_space_selection(
+        selected_times,
+        selected_spaces,
+    )
+
+    landscape = summarize_single_gene_landscape(
+        gene_id,
+        selected_times=selected_times,
+        selected_spaces=selected_spaces,
+    )
+
+    long_table = landscape["table"].copy()
+    long_table["SelectedTimes"] = ", ".join(selected_times)
+    long_table["SelectedSpaces"] = ", ".join(selected_spaces)
+    long_table["TableType"] = "condition_level"
+    long_table["Metric"] = ""
+    long_table["Value"] = ""
+
+    global_summary = landscape["global_summary"].copy()
+    global_long = global_summary.melt(
+        id_vars=["Gene", "GeneName", "SelectedTimes", "SelectedSpaces"],
+        var_name="Metric",
+        value_name="Value",
+    )
+    global_long["Time"] = ""
+    global_long["Space"] = ""
+    global_long["Condition"] = ""
+    global_long["Beta"] = ""
+    global_long["TableType"] = "global_summary"
+
+    time_summary = landscape["time_summary"].copy()
+    time_long = time_summary.melt(
+        id_vars=["Time"],
+        var_name="Metric",
+        value_name="Value",
+    )
+    time_long["Gene"] = gene_id
+    time_long["GeneName"] = get_gene_name(gene_id)
+    time_long["SelectedTimes"] = ", ".join(selected_times)
+    time_long["SelectedSpaces"] = ", ".join(selected_spaces)
+    time_long["Space"] = ""
+    time_long["Condition"] = ""
+    time_long["Beta"] = ""
+    time_long["TableType"] = "time_summary"
+
+    space_summary = landscape["space_summary"].copy()
+    space_long = space_summary.melt(
+        id_vars=["Space"],
+        var_name="Metric",
+        value_name="Value",
+    )
+    space_long["Gene"] = gene_id
+    space_long["GeneName"] = get_gene_name(gene_id)
+    space_long["SelectedTimes"] = ", ".join(selected_times)
+    space_long["SelectedSpaces"] = ", ".join(selected_spaces)
+    space_long["Time"] = ""
+    space_long["Condition"] = ""
+    space_long["Beta"] = ""
+    space_long["TableType"] = "space_summary"
+
+    cols = [
+        "TableType",
+        "Gene",
+        "GeneName",
+        "Time",
+        "Space",
+        "Condition",
+        "Beta",
+        "Metric",
+        "Value",
+        "SelectedTimes",
+        "SelectedSpaces",
+    ]
+
+    out = pd.concat(
+        [
+            long_table[cols],
+            global_long[cols],
+            time_long[cols],
+            space_long[cols],
+        ],
+        ignore_index=True,
+    )
+
+    return out
 
 # ============================================================
 # 4. Gene set descriptive plots
 # ============================================================
 
-def get_gene_set_matrix(gene_ids):
+def get_gene_set_matrix(gene_ids, selected_times=None, selected_spaces=None):
+    selected_times, selected_spaces = validate_time_space_selection(selected_times, selected_spaces)
+    condition_order = [f"{t}_{s}" for t in selected_times for s in selected_spaces]
+
     raw = load_raw_data()
     sub = raw[raw["Gene"].isin(gene_ids)].copy()
+    sub = sub[sub["Time"].astype(str).isin(selected_times)]
+    sub = sub[sub["Space"].astype(str).isin(selected_spaces)]
 
     if sub.empty:
-        raise ValueError("None of the selected genes were found in the raw fitness data.")
+        raise ValueError(
+            "None of the selected genes had data in the selected time/space window."
+        )
 
     sub = add_annotation(sub)
 
-    sub["Time"] = pd.Categorical(sub["Time"].astype(str), categories=TIME_LEVELS, ordered=True)
-    sub["Space"] = pd.Categorical(sub["Space"].astype(str), categories=SPACE_LEVELS, ordered=True)
+    sub["Time"] = pd.Categorical(sub["Time"].astype(str), categories=selected_times, ordered=True)
+    sub["Space"] = pd.Categorical(sub["Space"].astype(str), categories=selected_spaces, ordered=True)
     sub["Condition"] = sub["Time"].astype(str) + "_" + sub["Space"].astype(str)
 
     gene_order = (
@@ -654,17 +1054,29 @@ def get_gene_set_matrix(gene_ids):
             aggfunc="mean",
             observed=False
         )
-        .reindex(index=ordered_genes, columns=CONDITION_ORDER)
+        .reindex(index=ordered_genes, columns=condition_order)
     )
 
-    label_map = dict(zip(gene_order["Gene"], gene_order["GeneName"]))
+    label_map = {
+        row["Gene"]: make_gene_set_plot_label(row["GeneName"], row["Gene"])
+        for _, row in gene_order.iterrows()
+    }
     y_labels = [label_map.get(g, g) for g in mat.index]
 
-    return sub, mat, y_labels
+    return sub, mat, y_labels, selected_times, selected_spaces, condition_order
 
 
-def make_gene_set_descriptive_figure(gene_ids, gene_set_label):
-    sub, mat, y_labels = get_gene_set_matrix(gene_ids)
+def make_gene_set_descriptive_figure(
+    gene_ids,
+    gene_set_label,
+    selected_times=None,
+    selected_spaces=None,
+):
+    sub, mat, y_labels, selected_times, selected_spaces, condition_order = get_gene_set_matrix(
+        gene_ids,
+        selected_times=selected_times,
+        selected_spaces=selected_spaces,
+    )
 
     n_genes = sub["Gene"].nunique()
 
@@ -672,7 +1084,7 @@ def make_gene_set_descriptive_figure(gene_ids, gene_set_label):
         sub
         .groupby("Time", observed=False)["Beta"]
         .agg(["mean", "sem"])
-        .reindex(TIME_LEVELS)
+        .reindex(selected_times)
         .reset_index()
     )
     temporal["sem"] = temporal["sem"].fillna(0)
@@ -681,7 +1093,7 @@ def make_gene_set_descriptive_figure(gene_ids, gene_set_label):
         sub
         .groupby("Space", observed=False)["Beta"]
         .agg(["mean", "sem"])
-        .reindex(SPACE_LEVELS)
+        .reindex(selected_spaces)
         .reset_index()
     )
     spatial["sem"] = spatial["sem"].fillna(0)
@@ -695,7 +1107,7 @@ def make_gene_set_descriptive_figure(gene_ids, gene_set_label):
             aggfunc="mean",
             observed=False
         )
-        .reindex(index=TIME_LEVELS, columns=SPACE_LEVELS)
+        .reindex(index=selected_times, columns=selected_spaces)
     )
 
     ranked = (
@@ -705,27 +1117,33 @@ def make_gene_set_descriptive_figure(gene_ids, gene_set_label):
         .reset_index()
         .sort_values("Beta")
     )
-    ranked["Label"] = ranked["GeneName"].fillna(ranked["Gene"])
+    ranked["Label"] = ranked.apply(
+        lambda r: make_gene_set_plot_label(r["GeneName"], r["Gene"]),
+        axis=1,
+    )
+
+    heatmap_x_labels = [c.replace("_", "<br>") for c in condition_order]
+    heatmap_customdata = np.tile(np.array(condition_order, dtype=object), (len(y_labels), 1))
 
     fig = make_subplots(
-        rows=4,
+        rows=3,
         cols=3,
         specs=[
             [{"type": "heatmap", "colspan": 3}, None, None],
             [{"type": "xy"}, {"type": "xy"}, {"type": "heatmap"}],
-            [{"type": "xy", "colspan": 3}, None, None],
-            [{"type": "xy", "colspan": 3}, None, None],
+            [{"type": "xy", "colspan": 2}, None, {"type": "xy"}],
         ],
         subplot_titles=[
-            f"{gene_set_label}: Gene fitness across all conditions",
-            "Temporal pattern",
-            "Spatial pattern",
-            "Space × time interaction",
-            f"{gene_set_label}: genes ranked by mean fitness",
-            f"{gene_set_label}: beta distribution by intestinal location",
+            f"{gene_set_label}: gene-level fitness heatmap",
+            "Mean Beta across selected timepoints",
+            "Mean Beta across selected GI tract locations",
+            "Mean Beta by time × GI tract location",
+            "Genes ranked by mean Beta",
+            "Beta distribution by selected GI tract location",
         ],
-        vertical_spacing=0.11,
-        horizontal_spacing=0.08,
+        row_heights=[0.48, 0.24, 0.28],
+        vertical_spacing=0.09,
+        horizontal_spacing=0.095,
     )
 
     z = mat.values.astype(float)
@@ -744,18 +1162,28 @@ def make_gene_set_descriptive_figure(gene_ids, gene_set_label):
     fig.add_trace(
         go.Heatmap(
             z=z,
-            x=CONDITION_ORDER,
+            x=heatmap_x_labels,
             y=y_labels,
+            customdata=heatmap_customdata,
             colorscale=NARROW_WHITE_BROWN_BLUE,
             zmin=zmin,
             zmax=zmax,
             zmid=0,
-            colorbar=dict(title="Beta", x=1.02, y=0.86, len=0.28),
+            xgap=0.4,
+            ygap=0.6,
+            colorbar=dict(
+                title="Beta",
+                x=1.015,
+                y=0.88,
+                len=0.26,
+                thickness=13,
+            ),
             hovertemplate=(
                 "Gene: %{y}<br>"
-                "Condition: %{x}<br>"
+                "Condition: %{customdata}<br>"
                 "Beta: %{z:.3f}<extra></extra>"
             ),
+            showlegend=False,
         ),
         row=1,
         col=1,
@@ -810,16 +1238,25 @@ def make_gene_set_descriptive_figure(gene_ids, gene_set_label):
     fig.add_trace(
         go.Heatmap(
             z=interaction.values,
-            x=SPACE_LEVELS,
-            y=TIME_LEVELS,
+            x=selected_spaces,
+            y=selected_times,
             colorscale=NARROW_WHITE_BROWN_BLUE,
             zmid=0,
-            colorbar=dict(title="Mean Beta", x=1.02, y=0.48, len=0.25),
+            colorbar=dict(
+                title="Mean Beta",
+                x=1.015,
+                # Align the Mean Beta colorbar with the second-row interaction heatmap
+                # so it does not overlap the first-row gene-level heatmap.
+                y=0.455,
+                len=0.16,
+                thickness=13,
+            ),
             hovertemplate=(
                 "Space: %{x}<br>"
                 "Time: %{y}<br>"
                 "Mean Beta: %{z:.3f}<extra></extra>"
             ),
+            showlegend=False,
         ),
         row=2,
         col=3,
@@ -852,7 +1289,7 @@ def make_gene_set_descriptive_figure(gene_ids, gene_set_label):
         col=1,
     )
 
-    for s in SPACE_LEVELS:
+    for s in selected_spaces:
         vals = sub[sub["Space"].astype(str) == s]["Beta"].dropna()
         fig.add_trace(
             go.Box(
@@ -864,39 +1301,73 @@ def make_gene_set_descriptive_figure(gene_ids, gene_set_label):
                 showlegend=False,
                 hovertemplate=f"Space: {s}<br>Beta: %{{y:.3f}}<extra></extra>",
             ),
-            row=4,
-            col=1,
+            row=3,
+            col=3,
         )
 
     fig.update_xaxes(
-        tickangle=90,
-        title_text="Condition (timepoint_space)",
+        tickangle=0,
+        title_text="Condition",
+        tickfont=dict(size=9),
+        automargin=True,
         row=1,
         col=1,
     )
-    fig.update_yaxes(title_text="Gene", row=1, col=1)
+    fig.update_yaxes(
+        title_text="Gene",
+        tickfont=dict(size=11),
+        automargin=True,
+        row=1,
+        col=1,
+    )
 
     fig.update_xaxes(title_text="Timepoint", row=2, col=1)
     fig.update_yaxes(title_text="Mean Beta coefficient", row=2, col=1)
 
-    fig.update_xaxes(title_text="Intestinal location", tickangle=45, row=2, col=2)
+    fig.update_xaxes(title_text="Gastrointestinal (GI) tract location", tickangle=45, row=2, col=2)
     fig.update_yaxes(title_text="Mean Beta coefficient", row=2, col=2)
 
     fig.update_xaxes(title_text="Location", tickangle=45, row=2, col=3)
     fig.update_yaxes(title_text="Timepoint", row=2, col=3)
 
-    fig.update_xaxes(title_text="Mean Beta coefficient", row=3, col=1)
-    fig.update_yaxes(title_text="Gene", row=3, col=1)
+    fig.update_xaxes(
+        title_text="Mean Beta coefficient",
+        zeroline=True,
+        row=3,
+        col=1,
+    )
+    fig.update_yaxes(
+        title_text="Gene",
+        automargin=True,
+        tickfont=dict(size=10),
+        row=3,
+        col=1,
+    )
 
-    fig.update_xaxes(title_text="Intestinal location", row=4, col=1)
-    fig.update_yaxes(title_text="Beta coefficient", row=4, col=1)
+    fig.update_xaxes(
+        title_text="Gastrointestinal (GI) tract location",
+        tickangle=45,
+        tickfont=dict(size=10),
+        row=3,
+        col=3,
+    )
+    fig.update_yaxes(title_text="Beta coefficient", row=3, col=3)
+
+    dynamic_height = max(1250, 900 + 24 * n_genes)
 
     fig.update_layout(
-        title=f"Descriptive fitness summary for {gene_set_label} ({n_genes} genes found)",
+        title=(
+            f"Descriptive fitness summary for {gene_set_label} "
+            f"({n_genes} genes found; {len(selected_times)} timepoints × {len(selected_spaces)} spaces)"
+        ),
         template="plotly_white",
-        height=1500,
-        margin=dict(l=90, r=90, t=110, b=80),
+        height=dynamic_height,
+        margin=dict(l=150, r=125, t=115, b=90),
+        showlegend=False,
+        font=dict(size=12),
     )
+
+    fig.update_annotations(font=dict(size=14))
 
     summary = dbc.Alert(
         [
@@ -904,13 +1375,18 @@ def make_gene_set_descriptive_figure(gene_ids, gene_set_label):
             html.Br(),
             f"Input gene set: {gene_set_label}",
             html.Br(),
-            f"Number of genes found in dataset: {n_genes}",
+            f"Number of genes found in selected window: {n_genes}",
+            html.Br(),
+            f"Selected time window: {', '.join(selected_times)}",
+            html.Br(),
+            f"Selected space window: {', '.join(selected_spaces)}",
             html.Br(),
             html.Span(
-                "The top heatmap shows each gene across all spatial-temporal conditions. "
+                "The top heatmap shows each gene across the selected spatial-temporal conditions. "
                 "The temporal, spatial, and interaction panels summarize the average pattern "
-                "across the selected gene set. The ranked bar plot orders genes by mean Beta "
-                "coefficient, and the box plot shows the distribution of Beta values across intestinal locations."
+                "within the selected window. The ranked bar plot orders genes by mean Beta "
+                "coefficient inside the selected window, and the box plot shows Beta distributions "
+                "across the selected gastrointestinal (GI) tract locations."
             ),
         ],
         color="info",
@@ -923,7 +1399,22 @@ def make_gene_set_descriptive_figure(gene_ids, gene_set_label):
         .copy()
     )
 
-    return fig, summary, table
+    gene_summary = (
+        table
+        .groupby(["Gene", "GeneName"], observed=False)["Beta"]
+        .agg(
+            mean_Beta="mean",
+            median_Beta="median",
+            sd_Beta="std",
+            min_Beta="min",
+            max_Beta="max",
+            n_conditions="count",
+        )
+        .reset_index()
+        .sort_values(["mean_Beta", "GeneName", "Gene"])
+    )
+
+    return fig, summary, table, gene_summary
 
 
 # ============================================================
@@ -966,9 +1457,9 @@ layout = dbc.Container(
             [
                 html.Strong("How to use this page: "),
                 html.Span(
-                    "Use the first module to inspect one gene across infection time and intestinal location. "
-                    "Use the second module to summarize a predefined or uploaded gene set across all spatial-temporal "
-                    "conditions. Beta represents the fitness coefficient used in the dataset."
+                    "Use the first module to inspect one gene across infection time and gastrointestinal (GI) tract location. "
+                    "Use the second module to summarize a predefined or uploaded gene set across selected "
+                    "time and space windows. Beta represents the fitness coefficient used in the dataset."
                 ),
             ],
             color="secondary",
@@ -992,6 +1483,80 @@ layout = dbc.Container(
                     ],
                     md=6,
                 ),
+                dbc.Col(
+                    [
+                        html.Label("Contour line overlay"),
+                        dcc.RadioItems(
+                            id="desc-single-contour-lines",
+                            options=[
+                                {
+                                    "label": "Hide contour line trace",
+                                    "value": "hide",
+                                },
+                                {
+                                    "label": "Show contour line overlay",
+                                    "value": "show",
+                                },
+                            ],
+                            value="show",
+                            inline=True,
+                            inputStyle={"marginRight": "6px", "marginLeft": "12px"},
+                        ),
+                        html.Small(
+                            "Default shows contour lines. Hide it if you want to remove the extra Plotly trace.",
+                            className="text-muted",
+                        ),
+                    ],
+                    md=6,
+                ),
+            ],
+            className="mb-3",
+        ),
+
+        dbc.Row(
+            [
+                dbc.Col(
+                    [
+                        html.Label("Single-gene time window"),
+                        dcc.Dropdown(
+                            id="desc-single-gene-time-window",
+                            options=[
+                                {"label": t, "value": t}
+                                for t in TIME_LEVELS
+                            ],
+                            value=TIME_LEVELS,
+                            multi=True,
+                            clearable=False,
+                            placeholder="Choose timepoints",
+                        ),
+                        html.Small(
+                            "Default uses all infection timepoints.",
+                            className="text-muted",
+                        ),
+                    ],
+                    md=5,
+                ),
+                dbc.Col(
+                    [
+                        html.Label("Single-gene space window"),
+                        dcc.Dropdown(
+                            id="desc-single-gene-space-window",
+                            options=[
+                                {"label": s, "value": s}
+                                for s in SPACE_LEVELS
+                            ],
+                            value=SPACE_LEVELS,
+                            multi=True,
+                            clearable=False,
+                            placeholder="Choose gastrointestinal (GI) tract locations",
+                        ),
+                        html.Small(
+                            "Default uses all gastrointestinal (GI) tract locations.",
+                            className="text-muted",
+                        ),
+                    ],
+                    md=7,
+                ),
             ],
             className="mb-3",
         ),
@@ -1001,6 +1566,7 @@ layout = dbc.Container(
             children=[
                 html.Div(id="desc-single-gene-summary"),
                 dcc.Graph(id="desc-single-gene-plot", style={"width": "100%"}),
+                html.Div(id="desc-single-gene-table-wrapper"),
             ],
         ),
 
@@ -1013,7 +1579,8 @@ layout = dbc.Container(
                 html.Strong("Input options: "),
                 html.Span(
                     "Choose any predefined gene set from ../data/gene_sets, paste gene IDs or gene names, "
-                    "or upload a CSV/TXT/TSV file. Manual input and uploaded genes are added to the predefined set."
+                    "or upload a CSV/TXT/TSV file. Manual input and uploaded genes are added to the predefined set. "
+                    "Use the time and space filters to summarize only a selected window."
                 ),
             ],
             color="secondary",
@@ -1087,6 +1654,48 @@ layout = dbc.Container(
         dbc.Row(
             [
                 dbc.Col(
+                    [
+                        html.Label("Time window"),
+                        dcc.Dropdown(
+                            id="desc-gene-set-time-window",
+                            options=[{"label": t, "value": t} for t in TIME_LEVELS],
+                            value=TIME_LEVELS,
+                            multi=True,
+                            clearable=False,
+                            placeholder="Choose one or more timepoints",
+                        ),
+                        html.Small(
+                            "Default: all timepoints. The selected order follows the original biological order.",
+                            className="text-muted",
+                        ),
+                    ],
+                    md=6,
+                ),
+                dbc.Col(
+                    [
+                        html.Label("Space window"),
+                        dcc.Dropdown(
+                            id="desc-gene-set-space-window",
+                            options=[{"label": s, "value": s} for s in SPACE_LEVELS],
+                            value=SPACE_LEVELS,
+                            multi=True,
+                            clearable=False,
+                            placeholder="Choose one or more gastrointestinal (GI) tract locations",
+                        ),
+                        html.Small(
+                            "Default: all spaces. You can restrict to proximal, distal, cecum/colon, etc.",
+                            className="text-muted",
+                        ),
+                    ],
+                    md=6,
+                ),
+            ],
+            className="mb-3",
+        ),
+
+        dbc.Row(
+            [
+                dbc.Col(
                     dbc.Button(
                         "Update gene-set descriptive plots",
                         id="desc-update-gene-set-button",
@@ -1108,6 +1717,7 @@ layout = dbc.Container(
             ],
         ),
 
+        dcc.Download(id="desc-download-single-gene-table"),
         dcc.Download(id="desc-download-gene-set-table"),
     ],
     fluid=True,
@@ -1121,17 +1731,33 @@ layout = dbc.Container(
 @dash.callback(
     Output("desc-single-gene-plot", "figure"),
     Output("desc-single-gene-summary", "children"),
+    Output("desc-single-gene-table-wrapper", "children"),
     Input("desc-single-gene", "value"),
+    Input("desc-single-contour-lines", "value"),
+    Input("desc-single-gene-time-window", "value"),
+    Input("desc-single-gene-space-window", "value"),
 )
-def update_single_gene_plot(gene_id):
+def update_single_gene_plot(gene_id, show_contour_lines, selected_times, selected_spaces):
     try:
         if gene_id is None:
             fig = go.Figure()
             fig.update_layout(template="plotly_white", title="No gene selected")
-            return fig, dbc.Alert("No gene selected.", color="warning")
+            return fig, dbc.Alert("No gene selected.", color="warning"), ""
 
-        fig, summary = make_single_gene_surface_contour(gene_id)
-        return fig, summary
+        selected_times, selected_spaces = validate_time_space_selection(
+            selected_times,
+            selected_spaces,
+        )
+
+        fig, summary, landscape = make_single_gene_surface_contour(
+            gene_id,
+            show_contour_lines=show_contour_lines,
+            selected_times=selected_times,
+            selected_spaces=selected_spaces,
+        )
+        table_component = make_single_gene_table_component(landscape)
+
+        return fig, summary, table_component
 
     except Exception as e:
         fig = go.Figure()
@@ -1147,7 +1773,7 @@ def update_single_gene_plot(gene_id):
                 )
             ],
         )
-        return fig, dbc.Alert(str(e), color="danger")
+        return fig, dbc.Alert(str(e), color="danger"), ""
 
 
 @dash.callback(
@@ -1169,6 +1795,8 @@ def show_uploaded_filename(filename):
     State("desc-gene-set-text", "value"),
     State("desc-gene-set-upload", "contents"),
     State("desc-gene-set-upload", "filename"),
+    State("desc-gene-set-time-window", "value"),
+    State("desc-gene-set-space-window", "value"),
 )
 def update_gene_set_plots(
     n_clicks,
@@ -1176,8 +1804,15 @@ def update_gene_set_plots(
     manual_text,
     upload_contents,
     upload_filename,
+    selected_times,
+    selected_spaces,
 ):
     try:
+        selected_times, selected_spaces = validate_time_space_selection(
+            selected_times,
+            selected_spaces,
+        )
+
         gene_ids, missing, gene_set_label = get_gene_set_inputs(
             gene_set_file=gene_set_file,
             manual_text=manual_text,
@@ -1205,7 +1840,12 @@ def update_gene_set_plots(
                 color="warning",
             ), ""
 
-        fig, summary, table = make_gene_set_descriptive_figure(gene_ids, gene_set_label)
+        fig, summary, table, gene_summary = make_gene_set_descriptive_figure(
+            gene_ids,
+            gene_set_label,
+            selected_times=selected_times,
+            selected_spaces=selected_spaces,
+        )
 
         found_labels = [f"{get_gene_name(g)} | {g}" for g in gene_ids]
 
@@ -1217,6 +1857,10 @@ def update_gene_set_plots(
                 html.Br(),
                 f"Missing or unrecognized input terms: {len(missing)}",
                 html.Br(),
+                f"Selected timepoints: {', '.join(selected_times)}",
+                html.Br(),
+                f"Selected spaces: {', '.join(selected_spaces)}",
+                html.Br(),
                 html.Strong("Found genes: "),
                 html.Span(", ".join(found_labels[:30]) + (" ..." if len(found_labels) > 30 else "")),
                 html.Br() if missing else "",
@@ -1227,47 +1871,22 @@ def update_gene_set_plots(
             className="mb-3",
         )
 
-        table_show = table.copy()
-        table_show["Beta"] = pd.to_numeric(table_show["Beta"], errors="coerce").round(4)
-
+        # Module 2 tables are intentionally not displayed on the page.
+        # The downloadable CSV still includes both:
+        #   1) condition-level long-format fitness table
+        #   2) per-gene summary table for the selected window
         table_component = html.Div(
             [
-                html.H5("Gene-set long-format fitness table"),
-
-                dash_table.DataTable(
-                    data=table_show.to_dict("records"),
-                    columns=[{"name": c, "id": c} for c in table_show.columns],
-                    page_size=15,
-                    filter_action="native",
-                    sort_action="native",
-                    style_table={
-                        "overflowX": "auto",
-                        "maxHeight": "520px",
-                        "overflowY": "auto",
-                    },
-                    style_cell={
-                        "textAlign": "left",
-                        "fontFamily": "Arial",
-                        "fontSize": "13px",
-                        "padding": "6px",
-                        "minWidth": "100px",
-                        "whiteSpace": "normal",
-                    },
-                    style_header={
-                        "fontWeight": "bold",
-                        "backgroundColor": "#f1f3f5",
-                    },
+                dbc.Alert(
+                    "Gene-set condition-level and per-gene summary tables are available in the download file.",
+                    color="light",
+                    className="mb-2",
                 ),
-
-                html.Div(
-                    [
-                        dbc.Button(
-                            "Download gene-set fitness table",
-                            id="desc-download-gene-set-table-button",
-                            color="secondary",
-                            className="mt-3 mb-5",
-                        ),
-                    ]
+                dbc.Button(
+                    "Download gene-set fitness table",
+                    id="desc-download-gene-set-table-button",
+                    color="secondary",
+                    className="mt-2 mb-5",
                 ),
             ],
             className="mb-5",
@@ -1294,12 +1913,47 @@ def update_gene_set_plots(
 
 
 @dash.callback(
+    Output("desc-download-single-gene-table", "data"),
+    Input("desc-download-single-gene-table-button", "n_clicks"),
+    State("desc-single-gene", "value"),
+    State("desc-single-gene-time-window", "value"),
+    State("desc-single-gene-space-window", "value"),
+    prevent_initial_call=True,
+)
+def download_single_gene_table(n_clicks, gene_id, selected_times, selected_spaces):
+    if not n_clicks or gene_id is None:
+        return no_update
+
+    selected_times, selected_spaces = validate_time_space_selection(
+        selected_times,
+        selected_spaces,
+    )
+
+    table_out = make_single_gene_download_table(
+        gene_id,
+        selected_times=selected_times,
+        selected_spaces=selected_spaces,
+    )
+    table_out["Beta"] = pd.to_numeric(table_out["Beta"], errors="coerce").round(6)
+
+    filename = (
+        f"single_gene_fitness_landscape_{safe_file_label(get_gene_name(gene_id))}_{safe_file_label(gene_id)}"
+        f"_time-{safe_file_label('-'.join(selected_times))}"
+        f"_space-{safe_file_label('-'.join(selected_spaces))}.csv"
+    )
+
+    return dcc.send_data_frame(table_out.to_csv, filename, index=False)
+
+
+@dash.callback(
     Output("desc-download-gene-set-table", "data"),
     Input("desc-download-gene-set-table-button", "n_clicks"),
     State("desc-gene-set-file", "value"),
     State("desc-gene-set-text", "value"),
     State("desc-gene-set-upload", "contents"),
     State("desc-gene-set-upload", "filename"),
+    State("desc-gene-set-time-window", "value"),
+    State("desc-gene-set-space-window", "value"),
     prevent_initial_call=True,
 )
 def download_gene_set_table(
@@ -1308,9 +1962,16 @@ def download_gene_set_table(
     manual_text,
     upload_contents,
     upload_filename,
+    selected_times,
+    selected_spaces,
 ):
     if not n_clicks:
         return no_update
+
+    selected_times, selected_spaces = validate_time_space_selection(
+        selected_times,
+        selected_spaces,
+    )
 
     gene_ids, missing, gene_set_label = get_gene_set_inputs(
         gene_set_file=gene_set_file,
@@ -1322,19 +1983,62 @@ def download_gene_set_table(
     if len(gene_ids) == 0:
         return no_update
 
-    fig, summary, table = make_gene_set_descriptive_figure(gene_ids, gene_set_label)
+    fig, summary, table, gene_summary = make_gene_set_descriptive_figure(
+        gene_ids,
+        gene_set_label,
+        selected_times=selected_times,
+        selected_spaces=selected_spaces,
+    )
 
     table_out = table.copy()
     table_out["Beta"] = pd.to_numeric(table_out["Beta"], errors="coerce").round(6)
+    table_out["SelectedTimes"] = ", ".join(selected_times)
+    table_out["SelectedSpaces"] = ", ".join(selected_spaces)
 
-    safe_label = (
-        gene_set_label
-        .replace(" ", "_")
-        .replace("/", "_")
-        .replace("\\", "_")
-        .replace(":", "_")
+    gene_summary_out = gene_summary.copy()
+    gene_summary_out["Time"] = ""
+    gene_summary_out["Space"] = ""
+    gene_summary_out["Condition"] = ""
+    gene_summary_out["Beta"] = ""
+    gene_summary_out["SelectedTimes"] = ", ".join(selected_times)
+    gene_summary_out["SelectedSpaces"] = ", ".join(selected_spaces)
+
+    table_out["TableType"] = "condition_level"
+    gene_summary_out["TableType"] = "gene_summary"
+
+    all_cols = [
+        "TableType",
+        "Gene",
+        "GeneName",
+        "Time",
+        "Space",
+        "Condition",
+        "Beta",
+        "mean_Beta",
+        "median_Beta",
+        "sd_Beta",
+        "min_Beta",
+        "max_Beta",
+        "n_conditions",
+        "SelectedTimes",
+        "SelectedSpaces",
+    ]
+
+    for col in all_cols:
+        if col not in table_out.columns:
+            table_out[col] = ""
+        if col not in gene_summary_out.columns:
+            gene_summary_out[col] = ""
+
+    combined = pd.concat(
+        [table_out[all_cols], gene_summary_out[all_cols]],
+        ignore_index=True,
     )
 
-    filename = f"descriptive_fitness_{safe_label}.csv"
+    filename = (
+        f"descriptive_fitness_{safe_file_label(gene_set_label)}"
+        f"_time-{safe_file_label('-'.join(selected_times))}"
+        f"_space-{safe_file_label('-'.join(selected_spaces))}.csv"
+    )
 
-    return dcc.send_data_frame(table_out.to_csv, filename, index=False)
+    return dcc.send_data_frame(combined.to_csv, filename, index=False)

@@ -45,6 +45,18 @@ ANNOTATION_FILE = os.path.join(
     "new_annotations_with_uniprot_names.csv"
 )
 
+DEFAULT_HEATMAP_N_TOP = 20
+AUTO_HIDE_LABEL_THRESHOLD = 30
+MAX_DISPLAY_TABLE_DIM = 120
+MAX_SINGLE_GENE_TOP_N = 100
+MAX_HEATMAP_N_GENES = 1500
+PUBLISHABLE_HEATMAP_COLORSCALE = [
+    [0.0, "#2166AC"],
+    [0.5, "#FFFFFF"],
+    [1.0, "#B2182B"],
+]
+
+
 
 # ============================================================
 # 1. Data loading
@@ -176,6 +188,8 @@ def display_gene_label(gene_id):
 
 def get_active_matrix(cor_method):
     mats = load_correlation_matrices()
+    if cor_method not in mats:
+        cor_method = "spearman"
     return mats[cor_method]
 
 
@@ -183,14 +197,66 @@ def get_cor_label(cor_method):
     return "Spearman" if cor_method == "spearman" else "Pearson"
 
 
+def get_gene_count():
+    mats = load_correlation_matrices()
+    return mats["spearman"].shape[0]
+
+
 # ============================================================
 # 2. Heatmap helpers
 # ============================================================
 
+def safe_int(value, default=DEFAULT_HEATMAP_N_TOP, minimum=1, maximum=None):
+    """Convert Dash numeric input to a safe integer.
+
+    Dash can temporarily pass None when a number box is being edited, especially
+    when the value exceeds the HTML input max. This helper prevents the
+    int(None) error and clamps the requested value to the matrix size.
+    """
+    try:
+        if value is None or value == "":
+            value = default
+        value = int(float(value))
+    except (TypeError, ValueError):
+        value = default
+
+    value = max(minimum, value)
+    if maximum is not None:
+        value = min(value, maximum)
+
+    return value
+
+
 def get_top_variable_genes(mat, n_top):
     gene_sd = mat.std(axis=1, skipna=True)
-    n = min(int(n_top), len(gene_sd))
+    n = safe_int(n_top, default=DEFAULT_HEATMAP_N_TOP, minimum=1, maximum=len(gene_sd))
     return gene_sd.sort_values(ascending=False).head(n).index.tolist()
+
+
+def get_bottom_variable_genes(mat, n_bottom):
+    gene_sd = mat.std(axis=1, skipna=True)
+    n = safe_int(n_bottom, default=DEFAULT_HEATMAP_N_TOP, minimum=1, maximum=len(gene_sd))
+    return gene_sd.sort_values(ascending=True).head(n).index.tolist()
+
+
+def get_heatmap_gene_list(mat, heatmap_gene_mode, n_top):
+    total_genes = mat.shape[0]
+
+    effective_n = safe_int(
+        n_top,
+        default=DEFAULT_HEATMAP_N_TOP,
+        minimum=1,
+        maximum=min(MAX_HEATMAP_N_GENES, total_genes),
+    )
+
+    if heatmap_gene_mode == "bottom":
+        selected_genes = get_bottom_variable_genes(mat, effective_n)
+        return selected_genes, f"bottom {len(selected_genes)} variable genes", effective_n
+
+    # Default to top variable genes. This also protects against any stale browser state
+    # that might still send a removed/old value such as "all".
+    selected_genes = get_top_variable_genes(mat, effective_n)
+    return selected_genes, f"top {len(selected_genes)} variable genes", effective_n
 
 
 def cluster_matrix(mat):
@@ -243,12 +309,108 @@ def get_heatmap_limits(mat, scale_method):
     return zmin, zmax, f"Dynamic range: [{zmin:.3f}, {zmax:.3f}]"
 
 
-def make_heatmap_figure(cor_method, n_top_genes, cluster_genes, scale_method):
+def should_show_axis_labels(label_mode, n_genes):
+    if label_mode == "show":
+        return True
+    if label_mode == "hide":
+        return False
+    return n_genes <= AUTO_HIDE_LABEL_THRESHOLD
+
+
+def make_heatmap_axis_values_and_ticks(genes, label_mode, axis_name):
+    n_genes = len(genes)
+    show_labels = should_show_axis_labels(label_mode, n_genes)
+    numeric_values = list(range(n_genes))
+
+    if show_labels:
+        tickvals = numeric_values
+        ticktext = [display_gene_label(g) for g in genes]
+    else:
+        tickvals = []
+        ticktext = []
+
+    title_suffix = "gene labels shown" if show_labels else "gene labels hidden"
+    axis_title = f"{axis_name} gene ({title_suffix})"
+
+    return numeric_values, tickvals, ticktext, show_labels, axis_title
+
+
+def estimate_heatmap_margins(n_genes, show_row_labels, show_col_labels, row_genes, col_genes):
+    """Return compact margins/font sizes for a publication-style heatmap."""
+    if n_genes <= 30:
+        tick_font_size = 8
+    elif n_genes <= 80:
+        tick_font_size = 6
+    elif n_genes <= 150:
+        tick_font_size = 5
+    else:
+        tick_font_size = 4
+
+    if show_row_labels:
+        row_label_lengths = [len(display_gene_label(g)) for g in row_genes]
+        max_row_len = max(row_label_lengths) if row_label_lengths else 12
+        left_margin = min(210, max(105, int(max_row_len * 4.8)))
+    else:
+        left_margin = 45
+
+    if show_col_labels:
+        col_label_lengths = [len(display_gene_label(g)) for g in col_genes]
+        max_col_len = max(col_label_lengths) if col_label_lengths else 12
+        bottom_margin = min(230, max(115, int(max_col_len * 5.0)))
+    else:
+        bottom_margin = 55
+
+    right_margin = 70
+    top_margin = 92
+
+    return left_margin, right_margin, top_margin, bottom_margin, tick_font_size
+
+
+def make_heatmap_customdata(row_genes, col_genes):
+    customdata = []
+    for row_gene in row_genes:
+        row_name = display_gene_name(row_gene)
+        row_label = display_gene_label(row_gene)
+        row_items = []
+        for col_gene in col_genes:
+            col_name = display_gene_name(col_gene)
+            col_label = display_gene_label(col_gene)
+            row_items.append([
+                row_label,
+                row_gene,
+                row_name,
+                col_label,
+                col_gene,
+                col_name,
+            ])
+        customdata.append(row_items)
+
+    return np.array(customdata, dtype=object)
+
+
+def make_heatmap_figure(
+    cor_method,
+    heatmap_gene_mode,
+    n_top_genes,
+    cluster_genes,
+    scale_method,
+    row_label_mode,
+    col_label_mode,
+):
     mat = get_active_matrix(cor_method)
     cor_label = get_cor_label(cor_method)
+    total_genes = mat.shape[0]
 
-    top_genes = get_top_variable_genes(mat, n_top_genes)
-    sub = mat.loc[top_genes, top_genes].copy()
+    selected_genes, gene_selection_label, effective_n_top = get_heatmap_gene_list(
+        mat,
+        heatmap_gene_mode=heatmap_gene_mode,
+        n_top=n_top_genes,
+    )
+
+    # This line is the core fix for the variable-gene option:
+    # when the user enters 100, the selected matrix is explicitly rebuilt as
+    # 100 x 100 before clustering or plotting.
+    sub = mat.loc[selected_genes, selected_genes].copy()
 
     raw_min = float(np.nanmin(sub.values))
     raw_max = float(np.nanmax(sub.values))
@@ -258,30 +420,71 @@ def make_heatmap_figure(cor_method, n_top_genes, cluster_genes, scale_method):
 
     zmin, zmax, scale_label = get_heatmap_limits(sub, scale_method)
 
-    x_labels = [display_gene_label(g) for g in sub.columns]
-    y_labels = [display_gene_label(g) for g in sub.index]
+    row_genes = sub.index.astype(str).tolist()
+    col_genes = sub.columns.astype(str).tolist()
+    n_display = sub.shape[0]
+
+    x_values, x_tickvals, x_ticktext, show_col_labels, x_title = make_heatmap_axis_values_and_ticks(
+        col_genes,
+        col_label_mode,
+        "Column",
+    )
+    y_values, y_tickvals, y_ticktext, show_row_labels, y_title = make_heatmap_axis_values_and_ticks(
+        row_genes,
+        row_label_mode,
+        "Row",
+    )
+
+    customdata = make_heatmap_customdata(row_genes, col_genes)
+
+    # Compact, publication-style layout. Axis titles are removed and margins
+    # are kept tight so row labels sit close to the heatmap instead of floating
+    # far to the left.
+    left_margin, right_margin, top_margin, bottom_margin, tick_font_size = estimate_heatmap_margins(
+        n_display,
+        show_row_labels,
+        show_col_labels,
+        row_genes,
+        col_genes,
+    )
+
+    if n_display <= 30:
+        heatmap_height = max(640, 18 * n_display + 250)
+    elif n_display <= 120:
+        heatmap_height = 820
+    elif n_display <= 500:
+        heatmap_height = 920
+    else:
+        heatmap_height = 1020
 
     fig = go.Figure(
         data=go.Heatmap(
-            x=x_labels,
-            y=y_labels,
+            x=x_values,
+            y=y_values,
             z=sub.values,
-            colorscale=[
-                [0.0, "blue"],
-                [0.5, "white"],
-                [1.0, "red"],
-            ],
+            customdata=customdata,
+            colorscale=PUBLISHABLE_HEATMAP_COLORSCALE,
             zmin=zmin,
             zmax=zmax,
             zauto=False,
             colorbar=dict(
-                title=f"{cor_label}<br>correlation",
-                tickformat=".2f"
+                title=dict(text=f"{cor_label}<br>correlation", side="right"),
+                tickformat=".2f",
+                thickness=12,
+                len=0.76,
+                x=1.005,
+                xanchor="left",
+                y=0.50,
             ),
+            xgap=0.2 if n_display <= 120 else 0,
+            ygap=0.2 if n_display <= 120 else 0,
             hovertemplate=(
-                "<b>%{y}</b><br>"
-                "vs<br>"
-                "<b>%{x}</b><br>"
+                "<b>Row gene</b>: %{customdata[0]}<br>"
+                "Row Gene ID: %{customdata[1]}<br>"
+                "Row GeneName: %{customdata[2]}<br><br>"
+                "<b>Column gene</b>: %{customdata[3]}<br>"
+                "Column Gene ID: %{customdata[4]}<br>"
+                "Column GeneName: %{customdata[5]}<br><br>"
                 f"{cor_label} correlation: "
                 "%{z:.3f}<extra></extra>"
             )
@@ -289,20 +492,72 @@ def make_heatmap_figure(cor_method, n_top_genes, cluster_genes, scale_method):
     )
 
     fig.update_layout(
-        title=(
-            f"{cor_label} Co-fitness Correlation Matrix<br>"
-            f"<sup>Top {sub.shape[0]} variable genes | "
-            f"Raw range: [{raw_min:.3f}, {raw_max:.3f}] | "
-            f"{scale_label}</sup>"
+        title=dict(
+            text=(
+                f"{cor_label} Co-fitness Correlation Matrix<br>"
+                f"<sup>{gene_selection_label}; displayed {n_display} of {total_genes} genes | "
+                f"Raw range: [{raw_min:.3f}, {raw_max:.3f}] | "
+                f"{scale_label}</sup>"
+            ),
+            font=dict(size=18),
+            x=0.01,
+            xanchor="left",
         ),
         template="plotly_white",
-        height=760,
-        margin=dict(l=200, r=60, t=90, b=200),
-        xaxis=dict(tickangle=-45, tickfont=dict(size=8)),
-        yaxis=dict(tickfont=dict(size=8)),
+        height=heatmap_height,
+        margin=dict(l=left_margin, r=right_margin, t=top_margin, b=bottom_margin),
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font=dict(family="Arial", size=12, color="#222222"),
+        xaxis=dict(
+            title="",
+            tickmode="array",
+            tickvals=x_tickvals,
+            ticktext=x_ticktext,
+            tickangle=-45,
+            tickfont=dict(size=tick_font_size),
+            showticklabels=show_col_labels,
+            showgrid=False,
+            zeroline=False,
+            ticks="",
+            automargin=False,
+            constrain="domain",
+        ),
+        yaxis=dict(
+            title="",
+            tickmode="array",
+            tickvals=y_tickvals,
+            ticktext=y_ticktext,
+            tickfont=dict(size=tick_font_size),
+            showticklabels=show_row_labels,
+            showgrid=False,
+            zeroline=False,
+            autorange="reversed",
+            ticks="",
+            automargin=False,
+            constrain="domain",
+        ),
     )
 
-    return fig, sub
+    label_note = (
+        "Gene labels are shown."
+        if show_row_labels or show_col_labels
+        else f"Gene labels are hidden because the selected matrix contains >{AUTO_HIDE_LABEL_THRESHOLD} genes or labels were manually hidden. Hover over cells to see full GeneName | Gene ID."
+    )
+
+    metadata = {
+        "sub": sub,
+        "n_display": n_display,
+        "total_genes": total_genes,
+        "gene_selection_label": gene_selection_label,
+        "effective_n_top": effective_n_top,
+        "show_row_labels": show_row_labels,
+        "show_col_labels": show_col_labels,
+        "label_note": label_note,
+        "scale_label": scale_label,
+    }
+
+    return fig, sub, metadata
 
 
 # ============================================================
@@ -316,6 +571,8 @@ def get_single_gene_correlation_table(cor_method, gene_id, top_n, direction):
     if gene_id not in mat.index:
         raise ValueError(f"Gene not found in correlation matrix: {gene_id}")
 
+    top_n = safe_int(top_n, default=20, minimum=1, maximum=min(MAX_SINGLE_GENE_TOP_N, mat.shape[0] - 1))
+
     v = mat.loc[gene_id].copy()
     v = v.drop(labels=[gene_id], errors="ignore")
     v = v.replace([np.inf, -np.inf], np.nan).dropna()
@@ -328,7 +585,7 @@ def get_single_gene_correlation_table(cor_method, gene_id, top_n, direction):
         v = v[v.abs() > 0]
         v = v.loc[v.abs().sort_values(ascending=False).index]
 
-    v = v.head(int(top_n))
+    v = v.head(top_n)
 
     df = pd.DataFrame({
         "Rank": range(1, len(v) + 1),
@@ -393,11 +650,15 @@ def make_single_gene_figure(cor_method, gene_id, top_n, direction):
         )
     )
 
-    fig.add_vline(
-        x=0,
-        line_dash="dash",
-        line_color="gray"
-    )
+    # Show the zero-reference line only for the Top absolute mode.
+    # For Top positive or Top negative mode, all selected points are on one side of zero,
+    # so the zero line can visually dominate the plot and is intentionally hidden.
+    if direction == "absolute":
+        fig.add_vline(
+            x=0,
+            line_dash="dash",
+            line_color="gray"
+        )
 
     fig.update_layout(
         title=(
@@ -423,14 +684,6 @@ def make_summary_stats(cor_method):
     mat = get_active_matrix(cor_method)
     cor_label = get_cor_label(cor_method)
 
-    gene_sd = mat.std(axis=1, skipna=True).sort_values(ascending=False)
-
-    top_var = pd.DataFrame({
-        "GeneID": gene_sd.head(10).index,
-        "GeneName": [display_gene_name(g) for g in gene_sd.head(10).index],
-        "SD_across_correlations": gene_sd.head(10).values,
-    })
-
     vals = mat.values.flatten()
     vals = vals[np.isfinite(vals)]
 
@@ -441,34 +694,80 @@ def make_summary_stats(cor_method):
         f"Number of genes: {mat.shape[0]}\n\n"
         f"Correlation range: {np.nanmin(vals):.3f} to {np.nanmax(vals):.3f}\n"
         f"Mean correlation: {np.nanmean(vals):.3f}\n"
-        f"Median correlation: {np.nanmedian(vals):.3f}\n\n"
-        f"Top 10 most variable genes under {cor_label} correlation:"
+        f"Median correlation: {np.nanmedian(vals):.3f}"
     )
 
-    return summary_text, top_var
+    return summary_text
 
 
 # ============================================================
 # 5. Annotation text blocks
 # ============================================================
 
-def heatmap_table_annotation():
+def page_method_annotation():
+    return dbc.Alert(
+        [
+            html.Strong("Important interpretation note: "),
+            html.Span(
+                "Spearman and Pearson co-fitness correlations measure pairwise association between two gene fitness profiles. "
+                "They are useful for finding genes with similar or opposite fitness patterns, but they do not distinguish "
+                "direct associations from indirect associations. For example, two genes can be correlated because both are "
+                "associated with a third gene or pathway. To further separate direct from indirect relationships, use the "
+            ),
+            dcc.Link("Network Browser page", href="/network-browser"),
+            html.Span(
+                ", which is designed for network-level analysis such as partial-correlation or graphical-model-based relationships."
+            ),
+        ],
+        color="warning",
+        className="mb-4",
+    )
+
+
+def heatmap_module_annotation():
+    return dbc.Alert(
+        [
+            html.Strong("How to use this heatmap: "),
+            html.Span(
+                "The heatmap shows pairwise co-fitness correlations among selected genes. "
+                "Top variable genes are ranked by SD_across_correlations, meaning genes with the largest standard "
+                "deviation across their correlations with all other genes. Bottom variable genes have the smallest "
+                "SD_across_correlations and therefore more uniform or less contrasting co-fitness profiles. "
+                "The interactive heatmap is capped at 1,500 genes to keep browser rendering responsive; "
+                "to analyze or plot the full matrix, download the selected matrix table and plot it locally."
+            ),
+            html.Br(),
+            html.Span(
+                f"Row and column GeneName labels are set to 'Auto' by default. In Auto mode, labels are shown only when "
+                f"the displayed matrix has {AUTO_HIDE_LABEL_THRESHOLD} genes or fewer; for larger matrices they are hidden "
+                "to avoid a messy plot. Even when labels are hidden, hovering over any cell shows the full GeneName and Gene ID."
+            ),
+            html.Br(),
+            html.Span(
+                "Values above 1,500 are capped at 1,500 to keep the heatmap readable and responsive. "
+                "To plot the full 3,330 genes, download the table and plot the full matrix locally."
+            ),
+        ],
+        color="secondary",
+        className="mb-3",
+    )
+
+
+def heatmap_table_annotation(metadata=None):
+    metadata = metadata or {}
+    label_note = metadata.get("label_note", "Hover over heatmap cells to see full gene labels.")
+
     return dbc.Alert(
         [
             html.Strong("About this co-fitness matrix table: "),
             html.Span(
-                "Each row and column represents a gene. Each cell shows the selected "
-                "co-fitness correlation value between the row gene and the column gene. "
-                "Positive values indicate similar fitness behavior across conditions, while "
-                "negative values indicate opposite fitness behavior. Values close to 0 indicate "
-                "weak or no co-fitness relationship."
+                "Each row and column represents a gene. Each cell shows the selected co-fitness correlation value "
+                "between the row gene and the column gene. Positive values indicate similar fitness behavior across "
+                "conditions, while negative values indicate opposite fitness behavior. Values close to 0 indicate weak "
+                "or no pairwise co-fitness relationship."
             ),
             html.Br(),
-            html.Span(
-                "This table corresponds to the genes currently displayed in the heatmap. "
-                "If clustering is enabled, the row and column order follows the hierarchical "
-                "clustering used in the heatmap."
-            ),
+            html.Span(label_note),
         ],
         color="info",
         className="mb-3",
@@ -519,26 +818,34 @@ def summary_annotation():
 
 
 # ============================================================
-# 6. Layout
+# 6. Layout defaults
 # ============================================================
 
 try:
     _, _, _, gene_dropdown_options = load_gene_lookup()
     default_gene = gene_dropdown_options[0]["value"] if gene_dropdown_options else None
+    total_gene_count = get_gene_count()
 except Exception:
     gene_dropdown_options = []
     default_gene = None
+    total_gene_count = None
 
+
+# ============================================================
+# 7. Layout
+# ============================================================
 
 layout = dbc.Container(
     [
         html.H2("Cofitness", className="page-title"),
 
         html.P(
-            "Explore co-fitness correlations between genes using Spearman or Pearson correlation matrices. "
+            "Explore pairwise co-fitness correlations between genes using Spearman or Pearson correlation matrices. "
             "The single-gene co-fitness plot is shown first, followed by the interactive co-fitness heatmap.",
             className="lead"
         ),
+
+        page_method_annotation(),
 
         dbc.Row(
             [
@@ -574,8 +881,10 @@ layout = dbc.Container(
                 html.Strong("How to use this module: "),
                 html.Span(
                     "Select a query gene to identify genes with the strongest positive, negative, "
-                    "or absolute co-fitness correlations. Positive correlations indicate similar "
-                    "fitness profiles, while negative correlations indicate opposite fitness profiles."
+                    "or absolute pairwise co-fitness correlations. Positive correlations indicate similar "
+                    "fitness profiles, while negative correlations indicate opposite fitness profiles. "
+                    "These correlations are pairwise associations and should not be interpreted as direct regulation. "
+                    f"For readability, the number of top correlated partner genes is limited to {MAX_SINGLE_GENE_TOP_N}."
                 ),
             ],
             color="secondary",
@@ -600,13 +909,20 @@ layout = dbc.Container(
                 dbc.Col(
                     [
                         html.Label("Number of top correlated genes"),
-                        dbc.Input(
+                        dcc.Input(
                             id="cofit-top-n",
                             type="number",
-                            min=5,
-                            max=100,
-                            step=5,
+                            min=1,
+                            max=MAX_SINGLE_GENE_TOP_N,
+                            step=1,
                             value=20,
+                            debounce=False,
+                            className="form-control",
+                            style={"width": "100%"},
+                        ),
+                        html.Small(
+                            f"Choose 1–{MAX_SINGLE_GENE_TOP_N} partner genes. Values above {MAX_SINGLE_GENE_TOP_N} are capped at {MAX_SINGLE_GENE_TOP_N} to keep the single-gene plot readable and responsive. Press Enter or click outside the box if your browser does not update immediately.",
+                            className="text-muted",
                         ),
                     ],
                     md=3,
@@ -666,31 +982,47 @@ layout = dbc.Container(
 
         html.H3("2. Interactive Co-fitness Heatmap"),
 
-        dbc.Alert(
-            [
-                html.Strong("How to use this module: "),
-                html.Span(
-                    "The heatmap shows pairwise co-fitness correlations among the top variable genes. "
-                    "You can change the number of genes, enable hierarchical clustering, and adjust color scaling. "
-                    "Zoom by selecting an area; hover over cells to see exact correlation values; double-click to reset."
-                ),
-            ],
-            color="secondary",
-            className="mb-3",
-        ),
+        heatmap_module_annotation(),
 
         dbc.Row(
             [
                 dbc.Col(
                     [
-                        html.Label("Number of top variable genes"),
-                        dbc.Input(
+                        html.Label("Gene selection mode"),
+                        dcc.RadioItems(
+                            id="cofit-heatmap-gene-mode",
+                            options=[
+                                {"label": "Top variable genes", "value": "top"},
+                                {"label": "Bottom variable genes", "value": "bottom"},
+                            ],
+                            value="top",
+                            inline=True,
+                            inputStyle={"marginRight": "6px", "marginLeft": "10px"},
+                        ),
+                        html.Small(
+                            "Use top or bottom variable genes for ranked subsets of the co-fitness matrix.",
+                            className="text-muted",
+                        ),
+                    ],
+                    md=4,
+                ),
+                dbc.Col(
+                    [
+                        html.Label("Number of top/bottom variable genes"),
+                        dcc.Input(
                             id="cofit-n-top-genes",
                             type="number",
-                            min=5,
-                            max=100,
-                            step=5,
-                            value=20,
+                            min=1,
+                            max=MAX_HEATMAP_N_GENES,
+                            step=1,
+                            value=DEFAULT_HEATMAP_N_TOP,
+                            debounce=False,
+                            className="form-control",
+                            style={"width": "100%"},
+                        ),
+                        html.Small(
+                            f"Top variable genes are ranked by SD_across_correlations. Bottom variable genes have the smallest SD_across_correlations. Available genes: {total_gene_count if total_gene_count is not None else 'unknown'}. Values above 1,500 are capped at 1,500 to keep the heatmap readable and responsive. To plot the full 3,330 genes, download the table and plot the full matrix locally. Press Enter or click outside the box if your browser does not update immediately.",
+                            className="text-muted",
                         ),
                     ],
                     md=3,
@@ -706,9 +1038,10 @@ layout = dbc.Container(
                             ],
                             value="yes",
                             inline=True,
+                            inputStyle={"marginRight": "6px", "marginLeft": "10px"},
                         ),
                     ],
-                    md=3,
+                    md=2,
                 ),
                 dbc.Col(
                     [
@@ -733,7 +1066,7 @@ layout = dbc.Container(
                             clearable=False,
                         ),
                     ],
-                    md=4,
+                    md=3,
                 ),
             ],
             className="mb-3",
@@ -743,6 +1076,40 @@ layout = dbc.Container(
             [
                 dbc.Col(
                     [
+                        html.Label("Row gene labels"),
+                        dcc.Dropdown(
+                            id="cofit-row-label-mode",
+                            options=[
+                                {"label": f"Auto: show only if ≤ {AUTO_HIDE_LABEL_THRESHOLD} genes", "value": "auto"},
+                                {"label": "Always show", "value": "show"},
+                                {"label": "Always hide", "value": "hide"},
+                            ],
+                            value="auto",
+                            clearable=False,
+                        ),
+                    ],
+                    md=4,
+                ),
+                dbc.Col(
+                    [
+                        html.Label("Column gene labels"),
+                        dcc.Dropdown(
+                            id="cofit-column-label-mode",
+                            options=[
+                                {"label": f"Auto: show only if ≤ {AUTO_HIDE_LABEL_THRESHOLD} genes", "value": "auto"},
+                                {"label": "Always show", "value": "show"},
+                                {"label": "Always hide", "value": "hide"},
+                            ],
+                            value="auto",
+                            clearable=False,
+                        ),
+                    ],
+                    md=4,
+                ),
+                dbc.Col(
+                    [
+                        html.Label("Download matrix"),
+                        html.Br(),
                         dbc.Button(
                             "Download heatmap matrix table",
                             id="cofit-download-heatmap-table-button",
@@ -761,6 +1128,7 @@ layout = dbc.Container(
         dcc.Loading(
             type="circle",
             children=[
+                html.Div(id="cofit-heatmap-status"),
                 dcc.Graph(id="cofit-heatmap-plot", style={"width": "100%"}),
                 html.Div(id="cofit-heatmap-table"),
             ],
@@ -786,7 +1154,7 @@ layout = dbc.Container(
 
 
 # ============================================================
-# 7. Callbacks
+# 8. Callbacks
 # ============================================================
 
 @dash.callback(
@@ -795,12 +1163,16 @@ layout = dbc.Container(
     Input("cofit-cor-method", "value"),
     Input("cofit-gene-select", "value"),
     Input("cofit-top-n", "value"),
+    Input("cofit-top-n", "n_submit"),
+    Input("cofit-top-n", "n_blur"),
     Input("cofit-correlation-direction", "value"),
 )
 def update_single_gene_section(
     cor_method,
     gene_select,
     top_n,
+    top_n_submit,
+    top_n_blur,
     correlation_direction,
 ):
     try:
@@ -884,62 +1256,121 @@ def update_single_gene_section(
 @dash.callback(
     Output("cofit-heatmap-plot", "figure"),
     Output("cofit-heatmap-table", "children"),
+    Output("cofit-heatmap-status", "children"),
     Input("cofit-cor-method", "value"),
+    Input("cofit-heatmap-gene-mode", "value"),
     Input("cofit-n-top-genes", "value"),
+    Input("cofit-n-top-genes", "n_submit"),
+    Input("cofit-n-top-genes", "n_blur"),
     Input("cofit-cluster-genes", "value"),
     Input("cofit-heatmap-scale", "value"),
+    Input("cofit-row-label-mode", "value"),
+    Input("cofit-column-label-mode", "value"),
 )
 def update_heatmap_section(
     cor_method,
+    heatmap_gene_mode,
     n_top_genes,
+    n_top_genes_n_submit,
+    n_top_genes_n_blur,
     cluster_genes,
     heatmap_scale,
+    row_label_mode,
+    column_label_mode,
 ):
     try:
-        fig, sub = make_heatmap_figure(
+        fig, sub, metadata = make_heatmap_figure(
             cor_method=cor_method,
+            heatmap_gene_mode=heatmap_gene_mode,
             n_top_genes=n_top_genes,
             cluster_genes=cluster_genes,
             scale_method=heatmap_scale,
+            row_label_mode=row_label_mode,
+            col_label_mode=column_label_mode,
         )
 
-        df_display = sub.round(3).copy()
-        df_display.columns = [display_gene_label(g) for g in df_display.columns]
-        df_display.insert(0, "GeneName", [display_gene_name(g) for g in sub.index])
-        df_display.insert(0, "GeneID", sub.index)
+        requested_n_top = safe_int(
+            n_top_genes,
+            default=DEFAULT_HEATMAP_N_TOP,
+            minimum=1,
+            maximum=min(MAX_HEATMAP_N_GENES, metadata["total_genes"]),
+        )
 
-        table = html.Div(
+        status = dbc.Alert(
             [
-                heatmap_table_annotation(),
-
-                dash_table.DataTable(
-                    data=df_display.to_dict("records"),
-                    columns=[{"name": c, "id": c} for c in df_display.columns],
-                    page_size=10,
-                    filter_action="native",
-                    sort_action="native",
-                    style_table={
-                        "overflowX": "auto",
-                        "maxHeight": "520px",
-                        "overflowY": "auto"
-                    },
-                    style_cell={
-                        "textAlign": "left",
-                        "fontFamily": "Arial",
-                        "fontSize": "13px",
-                        "padding": "5px",
-                        "minWidth": "100px",
-                        "whiteSpace": "normal",
-                    },
-                    style_header={
-                        "fontWeight": "bold",
-                        "backgroundColor": "#f1f3f5",
-                    },
+                html.Strong("Current heatmap: "),
+                html.Span(
+                    f"Displaying {metadata['n_display']} of {metadata['total_genes']} genes "
+                    f"({metadata['gene_selection_label']}). "
                 ),
-            ]
+                html.Span(
+                    f"Requested top-variable genes: {requested_n_top}. "
+                    if heatmap_gene_mode == "top" else
+                    f"Requested bottom-variable genes: {requested_n_top}. "
+                ),
+                html.Span(
+                    "Values above 1,500 are capped at 1,500. Download the matrix table if you want to plot the full 3,330-gene matrix locally. "
+                    if metadata["total_genes"] > MAX_HEATMAP_N_GENES else ""
+                ),
+                html.Span(metadata["label_note"]),
+            ],
+            color="light",
+            className="mb-3",
         )
 
-        return fig, table
+        if sub.shape[0] > MAX_DISPLAY_TABLE_DIM:
+            table = html.Div(
+                [
+                    heatmap_table_annotation(metadata),
+                    dbc.Alert(
+                        (
+                            f"The selected heatmap contains {sub.shape[0]} × {sub.shape[1]} values. "
+                            "To keep the page responsive, the matrix table is not rendered in the browser. "
+                            "Use the download button to export the full selected matrix."
+                        ),
+                        color="warning",
+                        className="mb-3",
+                    ),
+                ]
+            )
+        else:
+            df_display = sub.round(3).copy()
+            df_display.columns = [display_gene_label(g) for g in df_display.columns]
+            df_display.insert(0, "GeneName", [display_gene_name(g) for g in sub.index])
+            df_display.insert(0, "GeneID", sub.index)
+
+            table = html.Div(
+                [
+                    heatmap_table_annotation(metadata),
+
+                    dash_table.DataTable(
+                        data=df_display.to_dict("records"),
+                        columns=[{"name": c, "id": c} for c in df_display.columns],
+                        page_size=10,
+                        filter_action="native",
+                        sort_action="native",
+                        style_table={
+                            "overflowX": "auto",
+                            "maxHeight": "520px",
+                            "overflowY": "auto"
+                        },
+                        style_cell={
+                            "textAlign": "left",
+                            "fontFamily": "Arial",
+                            "fontSize": "13px",
+                            "padding": "5px",
+                            "minWidth": "100px",
+                            "whiteSpace": "normal",
+                        },
+                        style_header={
+                            "fontWeight": "bold",
+                            "backgroundColor": "#f1f3f5",
+                        },
+                    ),
+                ]
+            )
+
+        return fig, table, status
 
     except Exception as e:
         fig = go.Figure()
@@ -955,7 +1386,7 @@ def update_heatmap_section(
                 )
             ]
         )
-        return fig, dbc.Alert(str(e), color="danger")
+        return fig, dbc.Alert(str(e), color="danger"), ""
 
 
 @dash.callback(
@@ -964,30 +1395,12 @@ def update_heatmap_section(
 )
 def update_summary_stats(cor_method):
     try:
-        summary_text, top_var = make_summary_stats(cor_method)
+        summary_text = make_summary_stats(cor_method)
 
         return html.Div(
             [
                 summary_annotation(),
-
                 html.Pre(summary_text),
-
-                dash_table.DataTable(
-                    data=top_var.round(4).to_dict("records"),
-                    columns=[{"name": c, "id": c} for c in top_var.columns],
-                    page_size=10,
-                    style_table={"overflowX": "auto"},
-                    style_cell={
-                        "textAlign": "left",
-                        "fontFamily": "Arial",
-                        "fontSize": "14px",
-                        "padding": "6px",
-                    },
-                    style_header={
-                        "fontWeight": "bold",
-                        "backgroundColor": "#f1f3f5",
-                    },
-                ),
             ]
         )
 
@@ -1015,7 +1428,8 @@ def download_single_gene_table(n_clicks, cor_method, gene_select, top_n, directi
         direction=direction,
     )
 
-    filename = f"cofitness_{cor_method}_{gene_select}_top_{top_n}_{direction}.csv"
+    safe_top_n = safe_int(top_n, default=20, minimum=1, maximum=MAX_SINGLE_GENE_TOP_N)
+    filename = f"cofitness_{cor_method}_{gene_select}_top_{safe_top_n}_{direction}.csv"
 
     return dcc.send_data_frame(df.to_csv, filename, index=False)
 
@@ -1024,26 +1438,50 @@ def download_single_gene_table(n_clicks, cor_method, gene_select, top_n, directi
     Output("cofit-download-heatmap-table", "data"),
     Input("cofit-download-heatmap-table-button", "n_clicks"),
     State("cofit-cor-method", "value"),
+    State("cofit-heatmap-gene-mode", "value"),
     State("cofit-n-top-genes", "value"),
     State("cofit-cluster-genes", "value"),
     State("cofit-heatmap-scale", "value"),
+    State("cofit-row-label-mode", "value"),
+    State("cofit-column-label-mode", "value"),
     prevent_initial_call=True,
 )
-def download_heatmap_table(n_clicks, cor_method, n_top_genes, cluster_genes, heatmap_scale):
+def download_heatmap_table(
+    n_clicks,
+    cor_method,
+    heatmap_gene_mode,
+    n_top_genes,
+    cluster_genes,
+    heatmap_scale,
+    row_label_mode,
+    column_label_mode,
+):
     if not n_clicks:
         return no_update
 
-    fig, sub = make_heatmap_figure(
+    fig, sub, metadata = make_heatmap_figure(
         cor_method=cor_method,
+        heatmap_gene_mode=heatmap_gene_mode,
         n_top_genes=n_top_genes,
         cluster_genes=cluster_genes,
         scale_method=heatmap_scale,
+        row_label_mode=row_label_mode,
+        col_label_mode=column_label_mode,
     )
 
     df_out = sub.round(6).copy()
     df_out.insert(0, "GeneID", sub.index)
     df_out.insert(1, "GeneName", [display_gene_name(g) for g in sub.index])
 
-    filename = f"cofitness_heatmap_matrix_{cor_method}_top_{n_top_genes}.csv"
+    safe_n_top = safe_int(
+        n_top_genes,
+        default=DEFAULT_HEATMAP_N_TOP,
+        minimum=1,
+        maximum=min(MAX_HEATMAP_N_GENES, metadata["total_genes"]),
+    )
+    selection_prefix = "bottom" if heatmap_gene_mode == "bottom" else "top"
+    selection_label = f"{selection_prefix}_{safe_n_top}"
+
+    filename = f"cofitness_heatmap_matrix_{cor_method}_{selection_label}_{cluster_genes}_{heatmap_scale}.csv"
 
     return dcc.send_data_frame(df_out.to_csv, filename, index=False)
