@@ -11,6 +11,7 @@ navbar = dbc.NavbarSimple(
         dbc.NavItem(dbc.NavLink("Clustering", href="/clustering")),
         dbc.NavItem(dbc.NavLink("Similarity Profile", href="/similarity-profile")),
         dbc.NavItem(dbc.NavLink("Network Browser", href="/network-browser")),
+        dbc.NavItem(dbc.NavLink("Predefined Pattern", href="/predefined-pattern")),
         dbc.NavItem(dbc.NavLink("AI Prediction", href="/ai-prediction")),
     ],
     brand="Spatial-Temporal in vivo Fitness Database for Vibrio Cholerae",
