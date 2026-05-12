@@ -119,6 +119,37 @@ def load_annotation():
     return ann
 
 
+@lru_cache(maxsize=1)
+def load_gene_lookup_options():
+    """
+    Build searchable dropdown options for manual query.
+
+    Users can search by either GeneName or Gene ID.  The value passed
+    downstream is always the canonical locus ID, so all existing plotting
+    code continues to work.  Predefined gene sets are also included as
+    selectable options.
+    """
+    raw_df = load_raw_data()
+    ann = load_annotation()
+
+    lookup = pd.DataFrame({"Gene": sorted(raw_df["Gene"].astype(str).unique())})
+    lookup = lookup.merge(ann, on="Gene", how="left")
+    lookup["GeneName"] = lookup["GeneName"].fillna(lookup["Gene"])
+    lookup["DisplayLabel"] = lookup["GeneName"] + " | " + lookup["Gene"]
+
+    gene_options = [
+        {"label": row["DisplayLabel"], "value": row["Gene"]}
+        for _, row in lookup.sort_values(["GeneName", "Gene"]).iterrows()
+    ]
+
+    gene_set_options = [
+        {"label": f"Gene set: {key}", "value": f"__gene_set__::{key}"}
+        for key in sorted(GENE_SET_FILES.keys(), key=lambda x: x.lower())
+    ]
+
+    return gene_set_options + gene_options
+
+
 @lru_cache(maxsize=32)
 def load_gene_set(gene_set_name):
     """
@@ -170,10 +201,18 @@ def parse_gene_tokens(text):
     """
     Parse manual gene input.
 
-    Accepts comma, newline, tab, semicolon, or space-separated gene IDs / gene names.
+    Accepts:
+      - a string with comma/newline/tab/semicolon/space-separated genes
+      - a list from a searchable Dash Dropdown with multi=True
     """
     if text is None:
         return []
+
+    if isinstance(text, (list, tuple, set)):
+        raw_items = []
+        for item in text:
+            raw_items.extend(parse_gene_tokens(item))
+        return list(dict.fromkeys(raw_items))
 
     text = str(text)
 
@@ -198,13 +237,20 @@ def parse_gene_tokens(text):
 
 def get_predefined_gene_set_key(query_text):
     """
-    If query_text exactly matches a predefined gene set name, return the canonical key.
-    Matching is case-insensitive.
+    If query_text exactly matches one predefined gene set name, return the canonical key.
+    Matching is case-insensitive. Also supports encoded dropdown values.
     """
-    if query_text is None:
+    tokens = parse_gene_tokens(query_text)
+
+    if len(tokens) != 1:
         return None
 
-    q = str(query_text).strip().lower()
+    q_raw = str(tokens[0]).strip()
+
+    if q_raw.startswith("__gene_set__::"):
+        q_raw = q_raw.split("::", 1)[1]
+
+    q = q_raw.lower()
 
     for key in GENE_SET_FILES.keys():
         if q == key.lower():
@@ -335,6 +381,34 @@ def make_custom_gene_set_df(gene_ids, label="Custom gene set"):
     return pd.DataFrame(rows)
 
 
+
+def expand_predefined_gene_set_tokens(tokens):
+    """
+    Allow the searchable dropdown/manual input to mix individual genes and
+    predefined gene sets. Encoded values use __gene_set__::<name>.
+    """
+    expanded_tokens = []
+
+    for token in tokens:
+        token_str = str(token).strip()
+        key = None
+
+        if token_str.startswith("__gene_set__::"):
+            key = token_str.split("::", 1)[1]
+        else:
+            for candidate in GENE_SET_FILES.keys():
+                if token_str.lower() == candidate.lower():
+                    key = candidate
+                    break
+
+        if key is not None and key in GENE_SET_FILES:
+            gs = load_gene_set(key)
+            expanded_tokens.extend(gs["locus_ID"].astype(str).tolist())
+        else:
+            expanded_tokens.append(token_str)
+
+    return list(dict.fromkeys(expanded_tokens))
+
 def get_query_gene_set(query_source, query_text, upload_contents, upload_filename):
     """
     Return query gene set dataframe with columns:
@@ -353,6 +427,7 @@ def get_query_gene_set(query_source, query_text, upload_contents, upload_filenam
             return load_gene_set(predefined_key), [], f"Using predefined gene set: {predefined_key}"
 
         tokens = parse_gene_tokens(query_text)
+        tokens = expand_predefined_gene_set_tokens(tokens)
         resolved, missing = resolve_gene_ids(tokens)
 
         if len(resolved) == 0:
@@ -1304,17 +1379,19 @@ layout = dbc.Container(
                 dbc.Col(
                     [
                         html.Label("Search gene name, gene ID, or predefined gene set"),
-                        dbc.Input(
+                        dcc.Dropdown(
                             id="similarity-query-text",
-                            type="text",
-                            value="motV",
-                            debounce=True,
+                            options=load_gene_lookup_options(),
+                            value=["__gene_set__::motV"],
+                            multi=True,
+                            searchable=True,
+                            clearable=True,
                             placeholder=(
-                                "Example: motV, N900_RS00010, or multiple genes separated by comma"
+                                "Type GeneName or Gene ID, e.g. motV or N900_RS00010"
                             ),
                         ),
                         html.Small(
-                            f"Available predefined gene sets: {available_gene_sets_text}",
+                            f"Start typing to search GeneName/Gene ID. Available predefined gene sets: {available_gene_sets_text}",
                             className="text-muted",
                         ),
                         html.Div(id="similarity-query-summary"),
