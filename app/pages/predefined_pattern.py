@@ -17,6 +17,12 @@ try:
 except Exception:
     HAS_LOWESS = False
 
+try:
+    from scipy.interpolate import PchipInterpolator
+    HAS_PCHIP = True
+except Exception:
+    HAS_PCHIP = False
+
 
 dash.register_page(__name__, path="/predefined-pattern", name="Predefined Pattern", order=6)
 
@@ -51,7 +57,7 @@ DEFAULT_START_TIME = "12h"
 DEFAULT_END_TIME = "24h"
 DEFAULT_START_SPACE = "SI6"
 DEFAULT_END_SPACE = "co"
-DEFAULT_TOP_N = 30
+DEFAULT_TOP_N = 50
 DEFAULT_DTW_WINDOW_FRACTION = 0.05
 
 # R-script default pattern:
@@ -319,23 +325,83 @@ def build_gene_feature_matrix(timepoints, spacepoints):
 
 
 def dtw_distance(vec_a, vec_b, window_fraction=0.05):
+    """
+    DTW distance designed to match R dtwclust::dtw_basic() default settings
+    as closely as possible for this univariate equal-length use case.
+
+    R call in the uploaded script:
+        dtwclust::dtw_basic(gene_vec, trend_vec, window.size = window_size)
+
+    dtwclust::dtw_basic defaults:
+        norm         = "L1"
+        step.pattern = dtw::symmetric2
+        normalize    = FALSE
+
+    Therefore this function uses:
+      - L1 local cost: abs(a_i - b_j)
+      - symmetric2 recurrence:
+            vertical   step: D[i-1, j]   + cost(i, j)
+            horizontal step: D[i,   j-1] + cost(i, j)
+            diagonal   step: D[i-1, j-1] + 2 * cost(i, j)
+      - centered Sakoe-Chiba/slanted-band style window:
+            abs(i - j) <= window_size
+      - no final normalization
+
+    Note:
+      This should make rankings much closer to R. For byte-identical results,
+      calling R's dtwclust::dtw_basic directly is still the only guaranteed route.
+    """
     a = np.asarray(vec_a, dtype=float)
     b = np.asarray(vec_b, dtype=float)
+
+    if a.ndim != 1 or b.ndim != 1:
+        a = np.ravel(a)
+        b = np.ravel(b)
+
     n = len(a)
     m = len(b)
-    window = max(abs(n - m), max(1, int(round(float(window_fraction) * max(n, m)))))
 
-    dp = np.full((n + 1, m + 1), np.inf)
-    dp[0, 0] = 0.0
+    if n == 0 or m == 0:
+        return np.inf
+
+    a = np.where(np.isfinite(a), a, 0.0)
+    b = np.where(np.isfinite(b), b, 0.0)
+
+    try:
+        window_fraction = float(window_fraction)
+    except Exception:
+        window_fraction = 0.05
+
+    # Match the R script:
+    #   window_size <- max(1, round(window_fraction * n))
+    #
+    # Python round() uses bankers rounding, R round() also uses IEC 60559
+    # round-to-even in modern R, but for safety this expression is equivalent
+    # for the usual n=12, fraction=0.05 case: round(0.6) -> 1.
+    window_size = max(1, int(round(window_fraction * n)))
+
+    # If lengths differ, the window must at least allow a valid path.
+    window_size = max(window_size, abs(n - m))
+
+    # 1-based DP matrix. D[i, j] corresponds to accumulated cost ending at
+    # a[i-1], b[j-1].
+    D = np.full((n + 1, m + 1), np.inf, dtype=float)
+    D[0, 0] = 0.0
 
     for i in range(1, n + 1):
-        j_start = max(1, i - window)
-        j_end = min(m, i + window)
+        j_start = max(1, i - window_size)
+        j_end = min(m, i + window_size)
+
         for j in range(j_start, j_end + 1):
             cost = abs(a[i - 1] - b[j - 1])
-            dp[i, j] = cost + min(dp[i - 1, j], dp[i, j - 1], dp[i - 1, j - 1])
 
-    return float(dp[n, m])
+            D[i, j] = min(
+                D[i - 1, j] + cost,          # vertical
+                D[i, j - 1] + cost,          # horizontal
+                D[i - 1, j - 1] + 2.0 * cost # diagonal, symmetric2
+            )
+
+    return float(D[n, m])
 
 
 def compute_trend_search(
@@ -389,11 +455,12 @@ def compute_trend_search(
     rank_table["Scale_Gene_Vector"] = bool(scale_gene_vector)
     rank_table["Scale_Trend_Vector"] = bool(scale_trend_vector)
     rank_table["DTW_Window_Fraction"] = float(dtw_window_fraction)
+    rank_table["DTW_Method"] = "dtwclust_like_L1_symmetric2_no_normalization"
 
     rank_table = rank_table[[
         "Rank", "Gene", "GeneName", "DTW_distance_to_trend", "Spearman_correlation_to_trend",
         "Selected_Timepoints", "Selected_Spacepoints",
-        "Scale_Gene_Vector", "Scale_Trend_Vector", "DTW_Window_Fraction"
+        "Scale_Gene_Vector", "Scale_Trend_Vector", "DTW_Window_Fraction", "DTW_Method"
     ]]
 
     trend_table = pd.DataFrame({
@@ -506,19 +573,128 @@ def make_trend_3d_figure(trend_table, timepoints, spacepoints, use_scaled=True):
     return fig
 
 
-def smooth_curve(x, y, span=0.8):
+def smooth_curve(x, y, span=0.8, n_points=80, degree=2):
+    """
+    R ggplot2::geom_smooth(method='loess')-like smoothing.
+
+    Important differences from the previous Python version:
+      1. Do NOT use global polynomial regression for the LOESS option.
+      2. Do NOT use PCHIP interpolation to invent the curve shape.
+      3. Do NOT use Plotly spline smoothing, which can overshoot at the ends.
+      4. Use local weighted polynomial regression with tricube weights.
+      5. Use degree=2 by default, matching R stats::loess default behavior.
+
+    This is still not byte-identical to R's stats::loess, but visually it is
+    much closer to ggplot2::geom_smooth than statsmodels.lowess or spline/PCHIP.
+    """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
+
     mask = np.isfinite(x) & np.isfinite(y)
     x = x[mask]
     y = y[mask]
-    if len(x) < 3 or not HAS_LOWESS:
+
+    if len(x) < 3:
         return x, y
+
     order = np.argsort(x)
     x = x[order]
     y = y[order]
-    smoothed = lowess(y, x, frac=float(span), return_sorted=True)
-    return smoothed[:, 0], smoothed[:, 1]
+
+    try:
+        span = float(span)
+    except Exception:
+        span = 0.8
+    span = max(0.2, min(1.0, span))
+
+    n = len(x)
+    q = max(degree + 1, int(np.ceil(span * n)))
+    q = min(q, n)
+
+    dense_x = np.linspace(float(np.min(x)), float(np.max(x)), int(n_points))
+    dense_y = np.empty_like(dense_x, dtype=float)
+
+    for k, x0 in enumerate(dense_x):
+        dist = np.abs(x - x0)
+
+        # Distance to the q-th nearest neighbor defines the local window.
+        h = np.partition(dist, q - 1)[q - 1]
+        if not np.isfinite(h) or h <= 0:
+            h = np.max(dist)
+        if not np.isfinite(h) or h <= 0:
+            dense_y[k] = np.nanmean(y)
+            continue
+
+        u = dist / h
+        weights = np.where(u < 1, (1 - u ** 3) ** 3, 0.0)
+
+        valid = weights > 0
+        if np.sum(valid) < degree + 1:
+            # Fallback to weighted/local mean if too few points are available.
+            if np.sum(weights) > 0:
+                dense_y[k] = np.sum(weights * y) / np.sum(weights)
+            else:
+                dense_y[k] = np.nanmean(y)
+            continue
+
+        xv = x[valid] - x0
+        yv = y[valid]
+        wv = weights[valid]
+
+        # Local polynomial design matrix centered at x0.
+        if degree >= 2 and len(yv) >= 3:
+            X_design = np.column_stack([np.ones_like(xv), xv, xv ** 2])
+        else:
+            X_design = np.column_stack([np.ones_like(xv), xv])
+
+        # Weighted least squares. Prediction at x0 is the intercept.
+        sqrt_w = np.sqrt(wv)
+        Xw = X_design * sqrt_w[:, None]
+        yw = yv * sqrt_w
+
+        try:
+            beta, *_ = np.linalg.lstsq(Xw, yw, rcond=None)
+            dense_y[k] = beta[0]
+        except Exception:
+            dense_y[k] = np.average(yv, weights=wv)
+
+    return dense_x, dense_y
+
+
+def polynomial_curve(x, y, degree=2, n_points=220):
+    """
+    Smooth a gene profile using polynomial regression.
+
+    degree=2 gives a quadratic curve.
+    degree=3 gives a cubic curve.
+
+    This is not the same as LOESS, but it gives a stable, globally smooth curve
+    and avoids the jagged appearance caused by connecting only 12 feature points.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    mask = np.isfinite(x) & np.isfinite(y)
+    x = x[mask]
+    y = y[mask]
+
+    if len(x) < degree + 1:
+        return x, y
+
+    order = np.argsort(x)
+    x = x[order]
+    y = y[order]
+
+    dense_x = np.linspace(float(np.min(x)), float(np.max(x)), int(n_points))
+
+    try:
+        coef = np.polyfit(x, y, deg=int(degree))
+        poly = np.poly1d(coef)
+        dense_y = poly(dense_x)
+    except Exception:
+        dense_y = np.interp(dense_x, x, y)
+
+    return dense_x, dense_y
 
 
 def make_top_gene_curve_figure(
@@ -551,6 +727,12 @@ def make_top_gene_curve_figure(
         if curve_style == "loess":
             xs, ys = smooth_curve(x, y, span=loess_span)
             mode = "lines"
+        elif curve_style == "poly2":
+            xs, ys = polynomial_curve(x, y, degree=2)
+            mode = "lines"
+        elif curve_style == "poly3":
+            xs, ys = polynomial_curve(x, y, degree=3)
+            mode = "lines"
         else:
             xs, ys = x, y
             mode = "lines+markers"
@@ -560,7 +742,7 @@ def make_top_gene_curve_figure(
                 x=xs,
                 y=ys,
                 mode=mode,
-                line=dict(color="rgba(130,130,130,0.52)", width=1.0),
+                line=dict(color="rgba(130,130,130,0.58)", width=1.15),
                 marker=dict(size=4, color="rgba(130,130,130,0.50)"),
                 hovertemplate=(
                     f"{label}<br>Feature index: %{{x}}<br>Value: %{{y:.3f}}<extra></extra>"
@@ -855,7 +1037,9 @@ layout = dbc.Container(
                     dcc.Dropdown(
                         id="trend-curve-style",
                         options=[
-                            {"label": "LOESS-smoothed grey curves", "value": "loess"},
+                            {"label": "R-like local quadratic LOESS", "value": "loess"},
+                            {"label": "Global polynomial degree 2", "value": "poly2"},
+                            {"label": "Global polynomial degree 3", "value": "poly3"},
                             {"label": "Connected raw feature lines", "value": "connected"},
                         ],
                         value="loess",
@@ -863,7 +1047,7 @@ layout = dbc.Container(
                     ),
                 ], md=4),
                 dbc.Col([
-                    html.Label("LOESS span"),
+                    html.Label("LOESS span; ignored for polynomial curves"),
                     dbc.Input(
                         id="trend-loess-span",
                         type="number",
