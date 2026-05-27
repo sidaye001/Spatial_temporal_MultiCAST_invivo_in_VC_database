@@ -123,21 +123,24 @@ def load_annotation():
     if not os.path.exists(ANNOTATION_FILE):
         mats = load_correlation_matrices()
         genes = list(mats["spearman"].index)
-        return pd.DataFrame({"Gene": genes, "GeneName": genes})
+        return pd.DataFrame({"Gene": genes, "GeneName": genes, "VC_ID": ""})
 
     ann = pd.read_csv(ANNOTATION_FILE)
 
     if "locus_ID" not in ann.columns:
         mats = load_correlation_matrices()
         genes = list(mats["spearman"].index)
-        return pd.DataFrame({"Gene": genes, "GeneName": genes})
+        return pd.DataFrame({"Gene": genes, "GeneName": genes, "VC_ID": ""})
 
     if "gene_name" not in ann.columns:
         ann["gene_name"] = ""
+    if "KEGG_VC_number" not in ann.columns:
+        ann["KEGG_VC_number"] = ""
 
-    ann = ann[["locus_ID", "gene_name"]].copy()
+    ann = ann[["locus_ID", "gene_name", "KEGG_VC_number"]].copy()
     ann["locus_ID"] = ann["locus_ID"].astype(str)
     ann["gene_name"] = ann["gene_name"].fillna("").astype(str)
+    ann["KEGG_VC_number"] = ann["KEGG_VC_number"].fillna("").astype(str).str.strip()
 
     ann["GeneName"] = np.where(
         ann["gene_name"].str.strip() != "",
@@ -145,8 +148,8 @@ def load_annotation():
         ann["locus_ID"]
     )
 
-    ann = ann.rename(columns={"locus_ID": "Gene"})
-    ann = ann[["Gene", "GeneName"]].drop_duplicates()
+    ann = ann.rename(columns={"locus_ID": "Gene", "KEGG_VC_number": "VC_ID"})
+    ann = ann[["Gene", "GeneName", "VC_ID"]].drop_duplicates()
 
     return ann
 
@@ -161,7 +164,13 @@ def load_gene_lookup():
     lookup = pd.DataFrame({"Gene": genes})
     lookup = lookup.merge(ann, on="Gene", how="left")
     lookup["GeneName"] = lookup["GeneName"].fillna(lookup["Gene"])
+    lookup["VC_ID"] = lookup["VC_ID"].fillna("").astype(str).str.strip()
     lookup["DisplayLabel"] = lookup["GeneName"] + " | " + lookup["Gene"]
+    lookup["DisplayLabel"] = np.where(
+        lookup["VC_ID"] != "",
+        lookup["DisplayLabel"] + " | " + lookup["VC_ID"],
+        lookup["DisplayLabel"],
+    )
 
     lookup = lookup.sort_values(["GeneName", "Gene"]).reset_index(drop=True)
 
@@ -179,6 +188,14 @@ def load_gene_lookup():
 def display_gene_name(gene_id):
     _, gene_to_name, _, _ = load_gene_lookup()
     return gene_to_name.get(gene_id, gene_id)
+
+
+def display_gene_vc_id(gene_id):
+    lookup, _, _, _ = load_gene_lookup()
+    match = lookup.loc[lookup["Gene"].astype(str) == str(gene_id), "VC_ID"]
+    if match.empty:
+        return ""
+    return str(match.iloc[0]).strip()
 
 
 def display_gene_label(gene_id):
@@ -370,18 +387,22 @@ def make_heatmap_customdata(row_genes, col_genes):
     customdata = []
     for row_gene in row_genes:
         row_name = display_gene_name(row_gene)
+        row_vc_id = display_gene_vc_id(row_gene)
         row_label = display_gene_label(row_gene)
         row_items = []
         for col_gene in col_genes:
             col_name = display_gene_name(col_gene)
+            col_vc_id = display_gene_vc_id(col_gene)
             col_label = display_gene_label(col_gene)
             row_items.append([
                 row_label,
                 row_gene,
                 row_name,
+                row_vc_id,
                 col_label,
                 col_gene,
                 col_name,
+                col_vc_id,
             ])
         customdata.append(row_items)
 
@@ -482,9 +503,11 @@ def make_heatmap_figure(
                 "<b>Row gene</b>: %{customdata[0]}<br>"
                 "Row Gene ID: %{customdata[1]}<br>"
                 "Row GeneName: %{customdata[2]}<br><br>"
-                "<b>Column gene</b>: %{customdata[3]}<br>"
-                "Column Gene ID: %{customdata[4]}<br>"
-                "Column GeneName: %{customdata[5]}<br><br>"
+                "Row VC_ID: %{customdata[3]}<br><br>"
+                "<b>Column gene</b>: %{customdata[4]}<br>"
+                "Column Gene ID: %{customdata[5]}<br>"
+                "Column GeneName: %{customdata[6]}<br>"
+                "Column VC_ID: %{customdata[7]}<br><br>"
                 f"{cor_label} correlation: "
                 "%{z:.3f}<extra></extra>"
             )
@@ -591,6 +614,7 @@ def get_single_gene_correlation_table(cor_method, gene_id, top_n, direction):
         "Rank": range(1, len(v) + 1),
         "Partner_GeneID": v.index.astype(str),
         "Partner_GeneName": [display_gene_name(g) for g in v.index],
+        "Partner_VC_ID": [display_gene_vc_id(g) for g in v.index],
         "Correlation_Method": cor_label,
         "Correlation": v.values,
         "Direction": np.where(v.values > 0, "Positive", "Negative"),
@@ -635,6 +659,7 @@ def make_single_gene_figure(cor_method, gene_id, top_n, direction):
                 [
                     df_plot["Partner_GeneName"],
                     df_plot["Partner_GeneID"],
+                    df_plot["Partner_VC_ID"],
                     df_plot["Abs_Correlation"].round(3),
                 ],
                 axis=-1
@@ -642,9 +667,10 @@ def make_single_gene_figure(cor_method, gene_id, top_n, direction):
             hovertemplate=(
                 "Partner GeneName: %{customdata[0]}<br>"
                 "Partner Gene ID: %{customdata[1]}<br>"
+                "Partner VC_ID: %{customdata[2]}<br>"
                 f"{cor_label} correlation: "
                 "%{x:.3f}<br>"
-                "Absolute correlation: %{customdata[2]:.3f}"
+                "Absolute correlation: %{customdata[3]:.3f}"
                 "<extra></extra>"
             ),
         )
@@ -895,7 +921,7 @@ layout = dbc.Container(
             [
                 dbc.Col(
                     [
-                        html.Label("Search by Gene ID or Gene Name"),
+                        html.Label("Search by Gene ID, Gene Name, or KEGG VC number"),
                         dcc.Dropdown(
                             id="cofit-gene-select",
                             options=gene_dropdown_options,
@@ -1199,6 +1225,7 @@ def update_single_gene_section(
             "Rank",
             "Partner_GeneID",
             "Partner_GeneName",
+            "Partner_VC_ID",
             "Correlation_Method",
             "Correlation",
             "Direction",
@@ -1337,6 +1364,7 @@ def update_heatmap_section(
             df_display = sub.round(3).copy()
             df_display.columns = [display_gene_label(g) for g in df_display.columns]
             df_display.insert(0, "GeneName", [display_gene_name(g) for g in sub.index])
+            df_display.insert(1, "VC_ID", [display_gene_vc_id(g) for g in sub.index])
             df_display.insert(0, "GeneID", sub.index)
 
             table = html.Div(
@@ -1472,6 +1500,7 @@ def download_heatmap_table(
     df_out = sub.round(6).copy()
     df_out.insert(0, "GeneID", sub.index)
     df_out.insert(1, "GeneName", [display_gene_name(g) for g in sub.index])
+    df_out.insert(2, "VC_ID", [display_gene_vc_id(g) for g in sub.index])
 
     safe_n_top = safe_int(
         n_top_genes,

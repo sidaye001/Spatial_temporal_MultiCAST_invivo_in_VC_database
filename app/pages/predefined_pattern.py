@@ -133,24 +133,28 @@ def load_annotation():
     genes = sorted(raw["Gene"].dropna().astype(str).unique())
 
     if not os.path.exists(ANNOTATION_FILE):
-        return pd.DataFrame({"Gene": genes, "GeneName": genes})
+        return pd.DataFrame({"Gene": genes, "GeneName": genes, "VC_ID": ""})
 
     ann = pd.read_csv(ANNOTATION_FILE)
 
     if "locus_ID" not in ann.columns:
-        return pd.DataFrame({"Gene": genes, "GeneName": genes})
+        return pd.DataFrame({"Gene": genes, "GeneName": genes, "VC_ID": ""})
 
     if "gene_name" not in ann.columns:
         ann["gene_name"] = ""
+    if "KEGG_VC_number" not in ann.columns:
+        ann["KEGG_VC_number"] = ""
 
-    ann = ann[["locus_ID", "gene_name"]].copy()
+    ann = ann[["locus_ID", "gene_name", "KEGG_VC_number"]].copy()
     ann["locus_ID"] = ann["locus_ID"].astype(str).str.strip()
     ann["gene_name"] = ann["gene_name"].fillna("").astype(str).str.strip()
+    ann["KEGG_VC_number"] = ann["KEGG_VC_number"].fillna("").astype(str).str.strip()
     ann["GeneName"] = np.where(ann["gene_name"] != "", ann["gene_name"], ann["locus_ID"])
 
     ann = (
         ann.rename(columns={"locus_ID": "Gene"})
-        [["Gene", "GeneName"]]
+        .rename(columns={"KEGG_VC_number": "VC_ID"})
+        [["Gene", "GeneName", "VC_ID"]]
         .drop_duplicates()
     )
 
@@ -160,12 +164,13 @@ def load_annotation():
 def add_annotation(df):
     ann = load_annotation()
     out = df.copy()
-    for col in ["GeneName", "gene_name", "GeneName_x", "GeneName_y"]:
+    for col in ["GeneName", "gene_name", "GeneName_x", "GeneName_y", "VC_ID", "VC_ID_x", "VC_ID_y", "KEGG_VC_number"]:
         if col in out.columns:
             out = out.drop(columns=[col])
     out["Gene"] = out["Gene"].astype(str)
     out = out.merge(ann, on="Gene", how="left")
     out["GeneName"] = out["GeneName"].fillna(out["Gene"])
+    out["VC_ID"] = out["VC_ID"].fillna("").astype(str).str.strip()
     return out
 
 
@@ -458,7 +463,7 @@ def compute_trend_search(
     rank_table["DTW_Method"] = "dtwclust_like_L1_symmetric2_no_normalization"
 
     rank_table = rank_table[[
-        "Rank", "Gene", "GeneName", "DTW_distance_to_trend", "Spearman_correlation_to_trend",
+        "Rank", "Gene", "GeneName", "VC_ID", "DTW_distance_to_trend", "Spearman_correlation_to_trend",
         "Selected_Timepoints", "Selected_Spacepoints",
         "Scale_Gene_Vector", "Scale_Trend_Vector", "DTW_Window_Fraction", "DTW_Method"
     ]]
@@ -473,12 +478,12 @@ def compute_trend_search(
 
     feature_matrix_out = xdf.copy()
     feature_matrix_out = feature_matrix_out.merge(
-        rank_table[["Gene", "GeneName", "Rank", "DTW_distance_to_trend", "Spearman_correlation_to_trend"]],
+        rank_table[["Gene", "GeneName", "VC_ID", "Rank", "DTW_distance_to_trend", "Spearman_correlation_to_trend"]],
         on="Gene",
         how="left",
     )
 
-    leading_cols = ["Gene", "GeneName", "Rank", "DTW_distance_to_trend", "Spearman_correlation_to_trend"]
+    leading_cols = ["Gene", "GeneName", "VC_ID", "Rank", "DTW_distance_to_trend", "Spearman_correlation_to_trend"]
     feature_matrix_out = feature_matrix_out[leading_cols + feature_order]
 
     return rank_table, trend_table, feature_matrix_out, X_for_distance, feature_order
@@ -722,7 +727,8 @@ def make_top_gene_curve_figure(
         i = gene_to_i[gid]
         y = X_for_distance[i, :]
         row = rank_table.loc[rank_table["Gene"] == gid].iloc[0]
-        label = f"{int(row['Rank'])}. {row['GeneName']} | {gid} | DTW={row['DTW_distance_to_trend']:.3f}"
+        vc_id = str(row.get("VC_ID", "")).strip()
+        label = f"{int(row['Rank'])}. {row['GeneName']} | {gid} | {vc_id} | DTW={row['DTW_distance_to_trend']:.3f}"
 
         if curve_style == "loess":
             xs, ys = smooth_curve(x, y, span=loess_span)
@@ -745,7 +751,7 @@ def make_top_gene_curve_figure(
                 line=dict(color="rgba(130,130,130,0.58)", width=1.15),
                 marker=dict(size=4, color="rgba(130,130,130,0.50)"),
                 hovertemplate=(
-                    f"{label}<br>Feature index: %{{x}}<br>Value: %{{y:.3f}}<extra></extra>"
+                    f"GeneName: {row['GeneName']}<br>Gene ID: {gid}<br>VC_ID: {vc_id}<br>Rank: {int(row['Rank'])}<br>Feature index: %{{x}}<br>Value: %{{y:.3f}}<extra></extra>"
                 ),
                 name=label,
                 showlegend=False,
@@ -809,20 +815,22 @@ def make_top_heatmap_figure(rank_table, feature_matrix, feature_order, top_n=30)
         vals = pd.to_numeric(fm.loc[gid, feature_order], errors="coerce").to_numpy(dtype=float)
         rows.append(vals)
 
-        label = f"{int(row['Rank'])}. {row['GeneName']} | {gid} | DTW={row['DTW_distance_to_trend']:.3f}"
+        vc_id = str(row.get("VC_ID", "")).strip()
+        label = f"{int(row['Rank'])}. {row['GeneName']} | {gid} | {vc_id} | DTW={row['DTW_distance_to_trend']:.3f}"
         labels.append(label)
-        customdata.append([str(row["GeneName"]), gid] * len(feature_order))
+        customdata.append([str(row["GeneName"]), gid, vc_id] * len(feature_order))
 
     if not rows:
         return go.Figure()
 
     z = np.vstack(rows)
 
-    # customdata shape: n_genes x n_features x 2
-    cd = np.empty((len(labels), len(feature_order), 2), dtype=object)
+    # customdata shape: n_genes x n_features x 3
+    cd = np.empty((len(labels), len(feature_order), 3), dtype=object)
     for i, (_, row) in enumerate(top.head(len(labels)).iterrows()):
         cd[i, :, 0] = str(row["GeneName"])
         cd[i, :, 1] = str(row["Gene"])
+        cd[i, :, 2] = str(row.get("VC_ID", "")).strip()
 
     fig = go.Figure(
         data=go.Heatmap(
@@ -836,6 +844,7 @@ def make_top_heatmap_figure(rank_table, feature_matrix, feature_order, top_n=30)
             hovertemplate=(
                 "GeneName: %{customdata[0]}<br>"
                 "Gene ID: %{customdata[1]}<br>"
+                "VC_ID: %{customdata[2]}<br>"
                 "Feature: %{x}<br>"
                 "Raw Beta/logFC: %{z:.3f}<extra></extra>"
             ),

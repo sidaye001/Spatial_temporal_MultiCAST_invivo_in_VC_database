@@ -153,6 +153,7 @@ def load_annotation():
         return pd.DataFrame({
             "Gene": nodes["id"].astype(str),
             "GeneName": nodes["id"].astype(str),
+            "VC_ID": "",
         })
 
     ann = pd.read_csv(ANNOTATION_FILE)
@@ -162,14 +163,18 @@ def load_annotation():
         return pd.DataFrame({
             "Gene": nodes["id"].astype(str),
             "GeneName": nodes["id"].astype(str),
+            "VC_ID": "",
         })
 
     if "gene_name" not in ann.columns:
         ann["gene_name"] = ""
+    if "KEGG_VC_number" not in ann.columns:
+        ann["KEGG_VC_number"] = ""
 
-    ann = ann[["locus_ID", "gene_name"]].copy()
+    ann = ann[["locus_ID", "gene_name", "KEGG_VC_number"]].copy()
     ann["locus_ID"] = ann["locus_ID"].astype(str)
     ann["gene_name"] = ann["gene_name"].fillna("").astype(str)
+    ann["KEGG_VC_number"] = ann["KEGG_VC_number"].fillna("").astype(str).str.strip()
 
     ann["GeneName"] = np.where(
         ann["gene_name"].str.strip() != "",
@@ -177,8 +182,8 @@ def load_annotation():
         ann["locus_ID"]
     )
 
-    ann = ann.rename(columns={"locus_ID": "Gene"})
-    ann = ann[["Gene", "GeneName"]].drop_duplicates()
+    ann = ann.rename(columns={"locus_ID": "Gene", "KEGG_VC_number": "VC_ID"})
+    ann = ann[["Gene", "GeneName", "VC_ID"]].drop_duplicates()
 
     return ann
 
@@ -196,6 +201,7 @@ def load_node_annotated():
     )
 
     node["GeneName"] = node["GeneName"].fillna(node["id"])
+    node["VC_ID"] = node["VC_ID"].fillna("").astype(str).str.strip()
 
     return node
 
@@ -205,14 +211,20 @@ def load_gene_lookup_options():
     """
     Build searchable dropdown options for query genes.
 
-    Users can search by either GeneName or Gene ID. The dropdown value is
+    Users can search by GeneName, Gene ID, or KEGG VC number. The dropdown value is
     the canonical network node ID/locus ID. Predefined gene sets are included
     as selectable options using encoded values.
     """
     node_anno = load_node_annotated().copy()
     node_anno["id"] = node_anno["id"].astype(str)
     node_anno["GeneName"] = node_anno["GeneName"].fillna(node_anno["id"]).astype(str)
+    node_anno["VC_ID"] = node_anno["VC_ID"].fillna("").astype(str).str.strip()
     node_anno["DisplayLabel"] = node_anno["GeneName"] + " | " + node_anno["id"]
+    node_anno["DisplayLabel"] = np.where(
+        node_anno["VC_ID"] != "",
+        node_anno["DisplayLabel"] + " | " + node_anno["VC_ID"],
+        node_anno["DisplayLabel"],
+    )
 
     gene_options = [
         {"label": row["DisplayLabel"], "value": row["id"]}
@@ -234,7 +246,8 @@ def extract_gene_col(df):
         "id", "ID",
         "X",
         "GeneID", "gene_id",
-        "GeneName", "gene_name"
+        "GeneName", "gene_name",
+        "VC_ID", "KEGGVC", "KEGG_VC_number"
     ]
 
     hit = [c for c in possible_cols if c in df.columns]
@@ -285,7 +298,8 @@ def parse_gene_tokens(text):
 
     bad_headers = {
         "gene", "genes", "geneid", "gene_id",
-        "locus_id", "genename", "gene_name"
+        "locus_id", "genename", "gene_name",
+        "keggvc", "kegg_vc_number"
     }
 
     tokens = [x for x in tokens if x.lower() not in bad_headers]
@@ -356,9 +370,12 @@ def resolve_gene_ids(tokens):
     for _, row in node_anno.iterrows():
         gid = str(row["id"])
         gname = str(row["GeneName"])
+        vc = str(row.get("VC_ID", "")).strip()
 
         lookup.setdefault(gid.lower(), []).append(gid)
         lookup.setdefault(gname.lower(), []).append(gid)
+        if vc:
+            lookup.setdefault(vc.lower(), []).append(gid)
 
     resolved = []
     missing = []
@@ -414,7 +431,7 @@ def get_query_genes(query_source, query_text, upload_contents, upload_filename):
         if len(resolved) == 0:
             raise ValueError(
                 "No valid query genes found in uploaded file. "
-                "Please upload a CSV/TSV/TXT file with gene IDs or gene names."
+                "Please upload a CSV/TSV/TXT file with gene IDs, gene names, or KEGG VC numbers."
             )
 
         return resolved, missing, f"Using uploaded gene list: {upload_filename}"
@@ -440,7 +457,7 @@ def get_query_genes(query_source, query_text, upload_contents, upload_filename):
         available_sets = ", ".join(GENE_SET_FILES.keys())
         raise ValueError(
             "No valid query genes found. "
-            "Please enter a valid gene ID, gene name, or predefined gene set name. "
+            "Please enter a valid gene ID, gene name, KEGG VC number, or predefined gene set name. "
             f"Available predefined gene sets: {available_sets}"
         )
 
@@ -522,6 +539,7 @@ def graph_from_edges_nodes(edge_df, node_df):
         G.add_node(
             row["id"],
             GeneName=row.get("GeneName", row["id"]),
+            VC_ID=row.get("VC_ID", ""),
             degree=float(row.get("degree", 1)),
             node_type=row.get("node_type", "Other"),
             is_query=bool(row.get("is_query", False))
@@ -854,8 +872,11 @@ def rank_candidates_connected_to_query(query_genes, partial_corr_cutoff):
 
     if "GeneName" not in rank.columns:
         rank["GeneName"] = rank["neighbor_gene"]
+    if "VC_ID" not in rank.columns:
+        rank["VC_ID"] = rank["VC_ID_ann"] if "VC_ID_ann" in rank.columns else ""
 
     rank["GeneName"] = rank["GeneName"].fillna(rank["neighbor_gene"])
+    rank["VC_ID"] = rank["VC_ID"].fillna("").astype(str).str.strip()
 
     return rank, input_edges
 
@@ -896,8 +917,11 @@ def build_candidate_subnetwork(
 
     if "GeneName" not in node_sub.columns:
         node_sub["GeneName"] = node_sub["Gene"]
+    if "VC_ID" not in node_sub.columns:
+        node_sub["VC_ID"] = node_sub["VC_ID_ann"] if "VC_ID_ann" in node_sub.columns else ""
 
     node_sub["GeneName"] = node_sub["GeneName"].fillna(node_sub["Gene"])
+    node_sub["VC_ID"] = node_sub["VC_ID"].fillna("").astype(str).str.strip()
     node_sub["degree"] = pd.to_numeric(node_sub.get("degree", 1), errors="coerce").fillna(1)
 
     node_sub["node_type"] = np.where(
@@ -938,6 +962,7 @@ def make_candidate_subnetwork_figure(
         G.add_node(
             row["Gene"],
             GeneName=row["GeneName"],
+            VC_ID=row.get("VC_ID", ""),
             node_type=row["node_type"],
             degree=float(row["degree"])
         )
@@ -983,10 +1008,14 @@ def make_candidate_subnetwork_figure(
 
         u_name = G.nodes[u].get("GeneName", u)
         v_name = G.nodes[v].get("GeneName", v)
+        u_vc_id = G.nodes[u].get("VC_ID", "")
+        v_vc_id = G.nodes[v].get("VC_ID", "")
 
         hover_text = (
             f"Source: {u_name} ({u})<br>"
+            f"Source VC_ID: {u_vc_id}<br>"
             f"Target: {v_name} ({v})<br>"
+            f"Target VC_ID: {v_vc_id}<br>"
             f"Partial correlation: {partial_corr:.4f}<br>"
             f"|Partial correlation|: {abs_partial_corr:.4f}<br>"
             f"Edge type: {edge_type}<br>"
@@ -1037,12 +1066,14 @@ def make_candidate_subnetwork_figure(
 
         for n in nodes:
             gname = G.nodes[n]["GeneName"]
+            vc_id = G.nodes[n].get("VC_ID", "")
             displayed_degree = G.degree(n)
             full_degree = G.nodes[n].get("degree", "NA")
 
             hover.append(
                 f"GeneName: {gname}<br>"
                 f"Gene ID: {n}<br>"
+                f"VC_ID: {vc_id}<br>"
                 f"Node type: {node_type}<br>"
                 f"Displayed degree: {displayed_degree}<br>"
                 f"Full-network degree: {full_degree}<br>"
@@ -1230,11 +1261,15 @@ def make_full_3d_network_figure(
 
             u_name = G.nodes[u].get("GeneName", u)
             v_name = G.nodes[v].get("GeneName", v)
+            u_vc_id = G.nodes[u].get("VC_ID", "")
+            v_vc_id = G.nodes[v].get("VC_ID", "")
 
             hover_text = (
                 f"Query-connected edge<br>"
                 f"Source: {u_name} ({u})<br>"
+                f"Source VC_ID: {u_vc_id}<br>"
                 f"Target: {v_name} ({v})<br>"
+                f"Target VC_ID: {v_vc_id}<br>"
                 f"Partial correlation: {partial_corr:.4f}<br>"
                 f"|Partial correlation|: {abs_partial_corr:.4f}<br>"
                 f"Edge type: {edge_type}"
@@ -1271,12 +1306,14 @@ def make_full_3d_network_figure(
             zs.append(z)
 
             gname = G.nodes[n].get("GeneName", n)
+            vc_id = G.nodes[n].get("VC_ID", "")
             displayed_degree = G.degree(n)
             full_degree = G.nodes[n].get("degree", "NA")
 
             hover.append(
                 f"GeneName: {gname}<br>"
                 f"Gene ID: {n}<br>"
+                f"VC_ID: {vc_id}<br>"
                 f"Displayed degree: {displayed_degree}<br>"
                 f"Full-network degree: {full_degree}<br>"
                 f"3D layout: {full_layout_method}"
@@ -1419,7 +1456,7 @@ def make_query_summary(query_genes, missing_genes, query_status):
                     html.Strong("Not recognized: "),
                     missing_preview,
                     html.Br(),
-                    "Please type a valid Gene ID, another GeneName from the annotation table, or upload a valid gene list."
+                    "Please type a valid Gene ID, GeneName, or KEGG VC number from the annotation table, or upload a valid gene list."
                 ],
                 className="mt-2"
             )
@@ -1472,7 +1509,7 @@ layout = dbc.Container(
             [
                 dbc.Col(
                     [
-                        html.Label("Search GeneName, Gene ID, or predefined gene set"),
+                        html.Label("Search GeneName, Gene ID, KEGG VC number, or predefined gene set"),
                         dcc.Dropdown(
                             id="network-query-text",
                             options=load_gene_lookup_options(),
@@ -1480,10 +1517,10 @@ layout = dbc.Container(
                             multi=True,
                             searchable=True,
                             clearable=True,
-                            placeholder="Type GeneName or Gene ID, e.g. tcpA or N900_RS01295",
+                            placeholder="Type GeneName, Gene ID, or KEGG VC number, e.g. tcpA, N900_RS01295, or VC_0828",
                         ),
                         html.Small(
-                            f"Start typing to search GeneName/Gene ID. Available predefined gene sets: {available_gene_sets_text}",
+                            f"Start typing to search GeneName/Gene ID/KEGG VC number. Available predefined gene sets: {available_gene_sets_text}",
                             className="text-muted"
                         ),
                         html.Div(id="network-query-summary"),

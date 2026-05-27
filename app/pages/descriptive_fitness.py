@@ -128,19 +128,22 @@ def load_annotation():
     genes = sorted(raw["Gene"].unique())
 
     if not os.path.exists(ANNOTATION_FILE):
-        return pd.DataFrame({"Gene": genes, "GeneName": genes})
+        return pd.DataFrame({"Gene": genes, "GeneName": genes, "VC_ID": ""})
 
     ann = pd.read_csv(ANNOTATION_FILE)
 
     if "locus_ID" not in ann.columns:
-        return pd.DataFrame({"Gene": genes, "GeneName": genes})
+        return pd.DataFrame({"Gene": genes, "GeneName": genes, "VC_ID": ""})
 
     if "gene_name" not in ann.columns:
         ann["gene_name"] = ""
+    if "KEGG_VC_number" not in ann.columns:
+        ann["KEGG_VC_number"] = ""
 
-    ann = ann[["locus_ID", "gene_name"]].copy()
+    ann = ann[["locus_ID", "gene_name", "KEGG_VC_number"]].copy()
     ann["locus_ID"] = ann["locus_ID"].astype(str).str.strip()
     ann["gene_name"] = ann["gene_name"].fillna("").astype(str).str.strip()
+    ann["KEGG_VC_number"] = ann["KEGG_VC_number"].fillna("").astype(str).str.strip()
 
     ann["GeneName"] = np.where(
         ann["gene_name"] != "",
@@ -150,7 +153,8 @@ def load_annotation():
 
     ann = (
         ann.rename(columns={"locus_ID": "Gene"})
-        [["Gene", "GeneName"]]
+        .rename(columns={"KEGG_VC_number": "VC_ID"})
+        [["Gene", "GeneName", "VC_ID"]]
         .drop_duplicates()
     )
 
@@ -165,7 +169,13 @@ def load_gene_lookup():
     lookup = pd.DataFrame({"Gene": sorted(raw["Gene"].unique())})
     lookup = lookup.merge(ann, on="Gene", how="left")
     lookup["GeneName"] = lookup["GeneName"].fillna(lookup["Gene"])
+    lookup["VC_ID"] = lookup["VC_ID"].fillna("").astype(str).str.strip()
     lookup["DisplayLabel"] = lookup["GeneName"] + " | " + lookup["Gene"]
+    lookup["DisplayLabel"] = np.where(
+        lookup["VC_ID"] != "",
+        lookup["DisplayLabel"] + " | " + lookup["VC_ID"],
+        lookup["DisplayLabel"],
+    )
 
     gene_to_name = dict(zip(lookup["Gene"], lookup["GeneName"]))
 
@@ -175,17 +185,21 @@ def load_gene_lookup():
     }
 
     name_lower_to_genes = {}
+    vc_lower_to_genes = {}
     for _, row in lookup.iterrows():
         nm = str(row["GeneName"]).strip().lower()
         if nm:
             name_lower_to_genes.setdefault(nm, []).append(row["Gene"])
+        vc = str(row["VC_ID"]).strip().lower()
+        if vc:
+            vc_lower_to_genes.setdefault(vc, []).append(row["Gene"])
 
     options = [
         {"label": row["DisplayLabel"], "value": row["Gene"]}
         for _, row in lookup.sort_values(["GeneName", "Gene"]).iterrows()
     ]
 
-    return lookup, gene_to_name, gene_upper_to_gene, name_lower_to_genes, options
+    return lookup, gene_to_name, gene_upper_to_gene, name_lower_to_genes, vc_lower_to_genes, options
 
 
 def add_annotation(df):
@@ -194,7 +208,9 @@ def add_annotation(df):
 
     annotation_like_cols = [
         "GeneName", "gene_name", "GeneName_x", "GeneName_y",
-        "gene_name_x", "gene_name_y"
+        "gene_name_x", "gene_name_y",
+        "VC_ID", "VC_ID_x", "VC_ID_y",
+        "KEGG_VC_number", "KEGG_VC_number_x", "KEGG_VC_number_y"
     ]
 
     drop_cols = [c for c in annotation_like_cols if c in out.columns]
@@ -204,18 +220,27 @@ def add_annotation(df):
     out["Gene"] = out["Gene"].astype(str)
     out = out.merge(ann, on="Gene", how="left")
     out["GeneName"] = out["GeneName"].fillna(out["Gene"])
+    out["VC_ID"] = out["VC_ID"].fillna("").astype(str).str.strip()
 
     return out
 
 
 def get_gene_name(gene_id):
-    _, gene_to_name, _, _, _ = load_gene_lookup()
+    _, gene_to_name, _, _, _, _ = load_gene_lookup()
     return gene_to_name.get(gene_id, gene_id)
+
+
+def get_gene_vc_id(gene_id):
+    lookup, _, _, _, _, _ = load_gene_lookup()
+    match = lookup.loc[lookup["Gene"].astype(str) == str(gene_id), "VC_ID"]
+    if match.empty:
+        return ""
+    return str(match.iloc[0]).strip()
 
 
 def resolve_gene_token(token):
     """
-    Resolve one user token as either Gene ID or GeneName.
+    Resolve one user token as Gene ID, GeneName, or KEGG VC number.
     Returns a list of matching Gene IDs.
     """
     if token is None:
@@ -225,7 +250,7 @@ def resolve_gene_token(token):
     if token == "":
         return []
 
-    _, _, gene_upper_to_gene, name_lower_to_genes, _ = load_gene_lookup()
+    _, _, gene_upper_to_gene, name_lower_to_genes, vc_lower_to_genes, _ = load_gene_lookup()
 
     if token.upper() in gene_upper_to_gene:
         return [gene_upper_to_gene[token.upper()]]
@@ -233,6 +258,9 @@ def resolve_gene_token(token):
     token_lower = token.lower()
     if token_lower in name_lower_to_genes:
         return name_lower_to_genes[token_lower]
+
+    if token_lower in vc_lower_to_genes:
+        return vc_lower_to_genes[token_lower]
 
     return []
 
@@ -247,6 +275,12 @@ def parse_gene_text(text):
         text = text.replace(sep, " ")
 
     tokens = [x.strip() for x in text.split(" ") if x.strip() != ""]
+    bad_headers = {
+        "gene", "genes", "geneid", "gene_id",
+        "locus_id", "genename", "gene_name",
+        "keggvc", "kegg_vc_number"
+    }
+    tokens = [x for x in tokens if x.lower() not in bad_headers]
     return tokens
 
 
@@ -340,6 +374,7 @@ def read_gene_set_file(filename):
     preferred_cols = [
         "Gene", "gene", "GeneID", "geneID", "locus_ID",
         "locus_id", "locus", "GeneName", "gene_name",
+        "VC_ID", "KEGGVC", "KEGG_VC_number",
         "X", "x"
     ]
 
@@ -384,7 +419,7 @@ def parse_uploaded_gene_file(contents, filename):
 
     preferred_cols = [
         "Gene", "gene", "GeneID", "geneID", "locus_ID",
-        "locus_id", "GeneName", "gene_name", "X", "x"
+        "locus_id", "GeneName", "gene_name", "VC_ID", "KEGGVC", "KEGG_VC_number", "X", "x"
     ]
 
     selected_col = None
@@ -487,7 +522,7 @@ def get_single_gene_landscape_table(gene_id, selected_times=None, selected_space
     sub["Condition"] = sub["Time"].astype(str) + "_" + sub["Space"].astype(str)
 
     out = (
-        sub[["Gene", "GeneName", "Time", "Space", "Condition", "Beta"]]
+        sub[["Gene", "GeneName", "VC_ID", "Time", "Space", "Condition", "Beta"]]
         .sort_values(["Time", "Space"])
         .copy()
     )
@@ -517,6 +552,7 @@ def summarize_single_gene_landscape(gene_id, selected_times=None, selected_space
         raise ValueError(f"No finite Beta values found for gene {gene_id} in the selected window.")
 
     gene_name = finite["GeneName"].iloc[0]
+    vc_id = finite["VC_ID"].iloc[0] if "VC_ID" in finite.columns else get_gene_vc_id(gene_id)
     display_label = f"{gene_name} | {gene_id}"
 
     max_row = finite.loc[finite["Beta"].idxmax()]
@@ -543,6 +579,7 @@ def summarize_single_gene_landscape(gene_id, selected_times=None, selected_space
             {
                 "Gene": gene_id,
                 "GeneName": gene_name,
+                "VC_ID": vc_id,
                 "SelectedTimes": ", ".join(selected_times),
                 "SelectedSpaces": ", ".join(selected_spaces),
                 "n_conditions": int(finite.shape[0]),
@@ -594,6 +631,8 @@ def make_single_gene_surface_contour(
     )
     sub = landscape["finite"].copy()
     display_label = landscape["display_label"]
+    gene_name = str(sub["GeneName"].iloc[0]) if "GeneName" in sub.columns and not sub.empty else get_gene_name(gene_id)
+    vc_id = str(sub["VC_ID"].iloc[0]).strip() if "VC_ID" in sub.columns and not sub.empty else get_gene_vc_id(gene_id)
     max_row = landscape["max_row"]
     min_row = landscape["min_row"]
 
@@ -660,6 +699,9 @@ def make_single_gene_surface_contour(
                 }
             },
             hovertemplate=(
+                f"GeneName: {gene_name}<br>"
+                f"Gene ID: {gene_id}<br>"
+                f"VC_ID: {vc_id}<br>"
                 "Time index: %{x}<br>"
                 "Space index: %{y}<br>"
                 "Beta: %{z:.3f}<extra></extra>"
@@ -686,6 +728,9 @@ def make_single_gene_surface_contour(
                 thickness=14,
             ),
             hovertemplate=(
+                f"GeneName: {gene_name}<br>"
+                f"Gene ID: {gene_id}<br>"
+                f"VC_ID: {vc_id}<br>"
                 "Time: %{x}<br>"
                 "Space: %{y}<br>"
                 "Beta: %{z:.3f}<extra></extra>"
@@ -729,7 +774,7 @@ def make_single_gene_surface_contour(
             textfont=dict(color="yellow", size=13),
             name="Maximum Beta",
             hovertemplate=(
-                f"Maximum Beta<br>Time: {max_time}<br>"
+                f"Maximum Beta<br>GeneName: {gene_name}<br>Gene ID: {gene_id}<br>VC_ID: {vc_id}<br>Time: {max_time}<br>"
                 f"Space: {max_space}<br>Beta: {max_beta:.3f}<extra></extra>"
             ),
             showlegend=False,
@@ -749,7 +794,7 @@ def make_single_gene_surface_contour(
             textfont=dict(color="lime", size=13),
             name="Minimum Beta",
             hovertemplate=(
-                f"Minimum Beta<br>Time: {min_time}<br>"
+                f"Minimum Beta<br>GeneName: {gene_name}<br>Gene ID: {gene_id}<br>VC_ID: {vc_id}<br>Time: {min_time}<br>"
                 f"Space: {min_space}<br>Beta: {min_beta:.3f}<extra></extra>"
             ),
             showlegend=False,
@@ -947,7 +992,7 @@ def make_single_gene_download_table(gene_id, selected_times=None, selected_space
 
     global_summary = landscape["global_summary"].copy()
     global_long = global_summary.melt(
-        id_vars=["Gene", "GeneName", "SelectedTimes", "SelectedSpaces"],
+        id_vars=["Gene", "GeneName", "VC_ID", "SelectedTimes", "SelectedSpaces"],
         var_name="Metric",
         value_name="Value",
     )
@@ -965,6 +1010,7 @@ def make_single_gene_download_table(gene_id, selected_times=None, selected_space
     )
     time_long["Gene"] = gene_id
     time_long["GeneName"] = get_gene_name(gene_id)
+    time_long["VC_ID"] = get_gene_vc_id(gene_id)
     time_long["SelectedTimes"] = ", ".join(selected_times)
     time_long["SelectedSpaces"] = ", ".join(selected_spaces)
     time_long["Space"] = ""
@@ -980,6 +1026,7 @@ def make_single_gene_download_table(gene_id, selected_times=None, selected_space
     )
     space_long["Gene"] = gene_id
     space_long["GeneName"] = get_gene_name(gene_id)
+    space_long["VC_ID"] = get_gene_vc_id(gene_id)
     space_long["SelectedTimes"] = ", ".join(selected_times)
     space_long["SelectedSpaces"] = ", ".join(selected_spaces)
     space_long["Time"] = ""
@@ -991,6 +1038,7 @@ def make_single_gene_download_table(gene_id, selected_times=None, selected_space
         "TableType",
         "Gene",
         "GeneName",
+        "VC_ID",
         "Time",
         "Space",
         "Condition",
@@ -1038,7 +1086,7 @@ def get_gene_set_matrix(gene_ids, selected_times=None, selected_spaces=None):
     sub["Condition"] = sub["Time"].astype(str) + "_" + sub["Space"].astype(str)
 
     gene_order = (
-        sub[["Gene", "GeneName"]]
+        sub[["Gene", "GeneName", "VC_ID"]]
         .drop_duplicates()
         .sort_values(["GeneName", "Gene"])
     )
@@ -1112,7 +1160,7 @@ def make_gene_set_descriptive_figure(
 
     ranked = (
         sub
-        .groupby(["Gene", "GeneName"], observed=False)["Beta"]
+        .groupby(["Gene", "GeneName", "VC_ID"], observed=False)["Beta"]
         .mean()
         .reset_index()
         .sort_values("Beta")
@@ -1123,7 +1171,20 @@ def make_gene_set_descriptive_figure(
     )
 
     heatmap_x_labels = [c.replace("_", "<br>") for c in condition_order]
-    heatmap_customdata = np.tile(np.array(condition_order, dtype=object), (len(y_labels), 1))
+    heatmap_customdata = []
+    gene_order = (
+        sub[["Gene", "GeneName", "VC_ID"]]
+        .drop_duplicates()
+        .set_index("Gene")
+    )
+    gene_info = gene_order[["GeneName", "VC_ID"]].to_dict("index")
+    for gene in mat.index:
+        info = gene_info.get(gene, {})
+        heatmap_customdata.append([
+            [gene, info.get("GeneName", gene), info.get("VC_ID", ""), condition]
+            for condition in condition_order
+        ])
+    heatmap_customdata = np.array(heatmap_customdata, dtype=object)
 
     fig = make_subplots(
         rows=3,
@@ -1179,8 +1240,10 @@ def make_gene_set_descriptive_figure(
                 thickness=13,
             ),
             hovertemplate=(
-                "Gene: %{y}<br>"
-                "Condition: %{customdata}<br>"
+                "GeneName: %{customdata[1]}<br>"
+                "Gene ID: %{customdata[0]}<br>"
+                "VC_ID: %{customdata[2]}<br>"
+                "Condition: %{customdata[3]}<br>"
                 "Beta: %{z:.3f}<extra></extra>"
             ),
             showlegend=False,
@@ -1271,8 +1334,10 @@ def make_gene_set_descriptive_figure(
             marker=dict(color=bar_colors, line=dict(color="black", width=0.5)),
             text=np.round(ranked["Beta"], 2),
             textposition="outside",
+            customdata=ranked["VC_ID"],
             hovertemplate=(
                 "Gene: %{y}<br>"
+                "VC_ID: %{customdata}<br>"
                 "Mean Beta: %{x:.3f}<extra></extra>"
             ),
             showlegend=False,
@@ -1394,14 +1459,14 @@ def make_gene_set_descriptive_figure(
     )
 
     table = (
-        sub[["Gene", "GeneName", "Time", "Space", "Beta", "Condition"]]
+        sub[["Gene", "GeneName", "VC_ID", "Time", "Space", "Beta", "Condition"]]
         .sort_values(["GeneName", "Gene", "Time", "Space"])
         .copy()
     )
 
     gene_summary = (
         table
-        .groupby(["Gene", "GeneName"], observed=False)["Beta"]
+        .groupby(["Gene", "GeneName", "VC_ID"], observed=False)["Beta"]
         .agg(
             mean_Beta="mean",
             median_Beta="median",
@@ -1422,7 +1487,7 @@ def make_gene_set_descriptive_figure(
 # ============================================================
 
 try:
-    _, _, _, _, gene_options = load_gene_lookup()
+    _, _, _, _, _, gene_options = load_gene_lookup()
     default_gene_matches = resolve_gene_token(DEFAULT_SINGLE_GENE_QUERY)
     default_single_gene = default_gene_matches[0] if default_gene_matches else (
         gene_options[0]["value"] if gene_options else None
@@ -1472,7 +1537,7 @@ layout = dbc.Container(
             [
                 dbc.Col(
                     [
-                        html.Label("Search single gene by Gene ID or GeneName"),
+                        html.Label("Search single gene by Gene ID, GeneName, or KEGG VC number"),
                         dcc.Dropdown(
                             id="desc-single-gene",
                             options=gene_options,
@@ -1578,7 +1643,7 @@ layout = dbc.Container(
             [
                 html.Strong("Input options: "),
                 html.Span(
-                    "Choose any predefined gene set from ../data/gene_sets, paste gene IDs or gene names, "
+                    "Choose any predefined gene set from ../data/gene_sets, paste gene IDs, gene names, or KEGG VC numbers, "
                     "or upload a CSV/TXT/TSV file. Manual input and uploaded genes are added to the predefined set. "
                     "Use the time and space filters to summarize only a selected window."
                 ),
@@ -1610,7 +1675,7 @@ layout = dbc.Container(
                         html.Label("Manual gene input"),
                         dcc.Textarea(
                             id="desc-gene-set-text",
-                            placeholder="Type gene IDs or gene names separated by comma, space, or new line",
+                            placeholder="Type gene IDs, gene names, or KEGG VC numbers separated by comma, space, or new line",
                             value="",
                             style={
                                 "width": "100%",
@@ -1827,7 +1892,7 @@ def update_gene_set_plots(
                 title="No valid genes found",
                 annotations=[
                     dict(
-                        text="No valid genes were found. Please check gene IDs or gene names.",
+                        text="No valid genes were found. Please check gene IDs, gene names, or KEGG VC numbers.",
                         x=0.5,
                         y=0.5,
                         showarrow=False,
@@ -1836,7 +1901,7 @@ def update_gene_set_plots(
             )
 
             return fig, dbc.Alert(
-                "No valid genes found. Please type valid Gene IDs or GeneNames, or upload a valid gene list.",
+                "No valid genes found. Please type valid Gene IDs, GeneNames, or KEGG VC numbers, or upload a valid gene list.",
                 color="warning",
             ), ""
 
@@ -2010,6 +2075,7 @@ def download_gene_set_table(
         "TableType",
         "Gene",
         "GeneName",
+        "VC_ID",
         "Time",
         "Space",
         "Condition",

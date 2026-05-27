@@ -158,23 +158,27 @@ def load_annotation():
     genes = sorted(raw["Gene"].unique())
 
     if not os.path.exists(ANNOTATION_FILE):
-        return pd.DataFrame({"Gene": genes, "GeneName": genes})
+        return pd.DataFrame({"Gene": genes, "GeneName": genes, "VC_ID": ""})
 
     ann = pd.read_csv(ANNOTATION_FILE)
     if "locus_ID" not in ann.columns:
-        return pd.DataFrame({"Gene": genes, "GeneName": genes})
+        return pd.DataFrame({"Gene": genes, "GeneName": genes, "VC_ID": ""})
 
     if "gene_name" not in ann.columns:
         ann["gene_name"] = ""
+    if "KEGG_VC_number" not in ann.columns:
+        ann["KEGG_VC_number"] = ""
 
-    ann = ann[["locus_ID", "gene_name"]].copy()
+    ann = ann[["locus_ID", "gene_name", "KEGG_VC_number"]].copy()
     ann["locus_ID"] = ann["locus_ID"].astype(str).str.strip()
     ann["gene_name"] = ann["gene_name"].fillna("").astype(str).str.strip()
+    ann["KEGG_VC_number"] = ann["KEGG_VC_number"].fillna("").astype(str).str.strip()
     ann["GeneName"] = np.where(ann["gene_name"] != "", ann["gene_name"], ann["locus_ID"])
 
     ann = (
         ann.rename(columns={"locus_ID": "Gene"})
-        [["Gene", "GeneName"]]
+        .rename(columns={"KEGG_VC_number": "VC_ID"})
+        [["Gene", "GeneName", "VC_ID"]]
         .drop_duplicates()
     )
     return ann
@@ -185,7 +189,10 @@ def add_annotation(df):
     out = df.copy()
 
     drop_cols = [
-        c for c in ["GeneName", "gene_name", "GeneName_x", "GeneName_y", "gene_name_x", "gene_name_y"]
+        c for c in [
+            "GeneName", "gene_name", "GeneName_x", "GeneName_y", "gene_name_x", "gene_name_y",
+            "VC_ID", "VC_ID_x", "VC_ID_y", "KEGG_VC_number", "KEGG_VC_number_x", "KEGG_VC_number_y"
+        ]
         if c in out.columns
     ]
     if drop_cols:
@@ -193,8 +200,9 @@ def add_annotation(df):
 
     out["Gene"] = out["Gene"].astype(str)
     ann["Gene"] = ann["Gene"].astype(str)
-    out = out.merge(ann[["Gene", "GeneName"]], on="Gene", how="left")
+    out = out.merge(ann[["Gene", "GeneName", "VC_ID"]], on="Gene", how="left")
     out["GeneName"] = out["GeneName"].fillna(out["Gene"])
+    out["VC_ID"] = out["VC_ID"].fillna("")
     return out
 
 
@@ -339,7 +347,7 @@ def get_precomputed_result_for_module1():
     all_tb = add_annotation(all_tb)
 
     gene_clusters = (
-        all_tb[["Gene", "GeneName", "Cluster_DTW", "Silhouette_DTW", "Cluster_cosine", "Silhouette_cosine"]]
+        all_tb[["Gene", "GeneName", "VC_ID", "Cluster_DTW", "Silhouette_DTW", "Cluster_cosine", "Silhouette_cosine"]]
         .drop_duplicates()
         .sort_values(["Cluster_DTW", "GeneName", "Gene"])
         .reset_index(drop=True)
@@ -584,7 +592,7 @@ def compute_custom_clustering_cached(
 
     raw = load_raw_data().copy()
     all_tb = raw.merge(
-        gene_clusters[["Gene", "GeneName", "Cluster", "Silhouette", "Active_Clustering_Method"]],
+        gene_clusters[["Gene", "GeneName", "VC_ID", "Cluster", "Silhouette", "Active_Clustering_Method"]],
         on="Gene",
         how="left",
     )
@@ -680,7 +688,7 @@ def make_faceted_profile_figure(
     display_spaces=None,
 ):
     df = all_tb.copy()
-    if "GeneName" not in df.columns:
+    if "GeneName" not in df.columns or "VC_ID" not in df.columns:
         df = add_annotation(df)
 
     df["Time"] = df["Time"].astype(str).str.strip()
@@ -774,6 +782,9 @@ def make_faceted_profile_figure(
         for gene in genes_to_plot:
             gdf = sub[sub["Gene"] == gene].sort_values(x_num)
             gname = gdf["GeneName"].iloc[0] if "GeneName" in gdf.columns and len(gdf) > 0 else gene
+            vc_id = gdf["VC_ID"].iloc[0] if "VC_ID" in gdf.columns and len(gdf) > 0 else ""
+            vc_id = str(vc_id).strip()
+            vc_id = vc_id if vc_id != "" else "NA"
             sx, sy = fit_curve(gdf[x_num].values, gdf["logFC"].values, fit_method=curve_fit_method, span=loess_span)
 
             if individual_curve_style == "colored":
@@ -795,6 +806,7 @@ def make_faceted_profile_figure(
                     hovertemplate=(
                         f"GeneName: {gname}<br>"
                         f"Gene ID: {gene}<br>"
+                        f"VC_ID: {vc_id}<br>"
                         f"Cluster: {c}<br>"
                         f"{x_title}: %{{x}}<br>"
                         "logFC: %{y:.3f}<extra></extra>"

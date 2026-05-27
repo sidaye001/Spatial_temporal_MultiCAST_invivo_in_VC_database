@@ -6,6 +6,9 @@ from dash import html
 import dash_bootstrap_components as dbc
 
 
+DATABASE_NAME = "Spatial-Temporal Gene Fitness Database in vivo for Vibrio cholerae"
+
+
 dash.register_page(__name__, path="/", name="Home")
 
 
@@ -29,9 +32,6 @@ HOME_FIGURE_PATH = os.path.join(
 # ============================================================
 
 def encode_image(image_path):
-    """
-    Encode a local image file as base64 so Dash can display it directly.
-    """
     if not os.path.exists(image_path):
         return None
 
@@ -41,27 +41,46 @@ def encode_image(image_path):
     return f"data:image/png;base64,{encoded}"
 
 
+def module_item(title, text, href):
+    return dbc.Col(
+        dbc.Card(
+            dbc.CardBody(
+                [
+                    html.H5(title, className="mb-2", style={"fontWeight": "650"}),
+                    html.P(text, className="mb-3", style={"color": TEXT_COLOR}),
+                    dbc.Button("Open", href=href, color="primary", outline=True, size="sm"),
+                ]
+            ),
+            style=CARD_STYLE,
+            className="h-100",
+        ),
+        lg=4,
+        md=6,
+        className="mb-3",
+    )
+
+
 HOME_IMAGE_SRC = encode_image(HOME_FIGURE_PATH)
 
 
 # ============================================================
-# 2. Reusable styles
+# 2. Styles
 # ============================================================
 
 TITLE_COLOR = "#123A7A"
-TEXT_COLOR = "#4a4a4a"
+TEXT_COLOR = "#3f4a54"
 MUTED_COLOR = "#6c757d"
 
 CARD_STYLE = {
-    "borderRadius": "14px",
-    "boxShadow": "0 2px 10px rgba(0,0,0,0.06)",
-    "border": "1px solid rgba(18, 58, 122, 0.08)",
+    "borderRadius": "8px",
+    "boxShadow": "0 2px 10px rgba(0,0,0,0.05)",
+    "border": "1px solid rgba(18, 58, 122, 0.10)",
 }
 
 SECTION_TITLE_STYLE = {
-    "fontWeight": "600",
+    "fontWeight": "650",
     "color": TITLE_COLOR,
-    "marginBottom": "0.9rem",
+    "marginBottom": "0.85rem",
 }
 
 
@@ -71,42 +90,32 @@ SECTION_TITLE_STYLE = {
 
 layout = dbc.Container(
     [
-        # ======================================================
-        # Hero title
-        # ======================================================
         dbc.Row(
             [
                 dbc.Col(
                     [
                         html.H1(
-                            "Spatial-Temporal Gene Fitness Database in vivo for Vibrio cholerae",
+                            DATABASE_NAME,
                             style={
                                 "fontWeight": "700",
                                 "color": TITLE_COLOR,
-                                "marginBottom": "0.5rem",
                                 "lineHeight": "1.15",
+                                "marginBottom": "0.65rem",
                             },
                         ),
                         html.P(
-                            "An interactive public web database for exploring in vivo gene fitness "
-                            "patterns of Vibrio cholerae across intestinal space, infection time, "
-                            "and functional relationships.",
-                            style={
-                                "fontSize": "1.15rem",
-                                "color": TEXT_COLOR,
-                                "marginBottom": "0.5rem",
-                            },
+                            "An interactive Dash/Plotly resource for exploring genome-wide "
+                            "in vivo fitness measurements across infection time points and "
+                            "gastrointestinal locations.",
+                            className="lead",
+                            style={"color": TEXT_COLOR, "marginBottom": "0.4rem"},
                         ),
                         html.P(
-                            "This resource organizes spatial-temporal in vivo fitness measurements into "
-                            "an interactive analysis platform, enabling users to explore descriptive "
-                            "fitness trends, cofitness, clustering, similarity profiles, network "
-                            "relationships, and future AI-based prediction.",
-                            style={
-                                "fontSize": "1.02rem",
-                                "color": "#5a5a5a",
-                                "marginBottom": "0",
-                            },
+                            "The current database supports single-gene inspection, gene-set summaries, "
+                            "cofitness analysis, clustering, query-based profile matching, predefined "
+                            "pattern search, and network exploration. Gene queries support locus IDs, "
+                            "gene names, and VC_ID values from the annotation table.",
+                            style={"color": "#56616b", "marginBottom": "0"},
                         ),
                     ],
                     width=12,
@@ -115,111 +124,55 @@ layout = dbc.Container(
             className="mb-4",
         ),
 
-        # ======================================================
-        # Home schematic figure
-        # ======================================================
         dbc.Row(
             [
                 dbc.Col(
-                    dbc.Card(
-                        dbc.CardBody(
+                    [
+                        html.Img(
+                            src=HOME_IMAGE_SRC,
+                            style={
+                                "width": "100%",
+                                "display": "block",
+                                "borderRadius": "8px",
+                                "border": "1px solid rgba(18, 58, 122, 0.10)",
+                            },
+                        )
+                        if HOME_IMAGE_SRC is not None
+                        else dbc.Alert(
                             [
-                                html.H4(
-                                    "Database Overview",
-                                    style=SECTION_TITLE_STYLE,
-                                ),
-                                html.Div(
-                                    [
-                                        html.Img(
-                                            src=HOME_IMAGE_SRC,
-                                            style={
-                                                "width": "100%",
-                                                "maxWidth": "1450px",
-                                                "display": "block",
-                                                "margin": "0 auto",
-                                                "borderRadius": "10px",
-                                            },
-                                        )
-                                    ]
-                                    if HOME_IMAGE_SRC is not None
-                                    else [
-                                        dbc.Alert(
-                                            [
-                                                html.Strong("Home figure not found. "),
-                                                f"Expected file path: {HOME_FIGURE_PATH}",
-                                            ],
-                                            color="warning",
-                                            className="mb-0",
-                                        )
-                                    ]
-                                ),
-                            ]
-                        ),
-                        style=CARD_STYLE,
-                    ),
+                                html.Strong("Home figure not found. "),
+                                f"Expected file path: {HOME_FIGURE_PATH}",
+                            ],
+                            color="warning",
+                            className="mb-0",
+                        )
+                    ],
                     width=12,
                 )
             ],
             className="mb-4",
         ),
 
-        # ======================================================
-        # Introduction and contents
-        # ======================================================
         dbc.Row(
             [
                 dbc.Col(
                     dbc.Card(
                         dbc.CardBody(
                             [
-                                html.H4(
-                                    "Introduction",
-                                    style=SECTION_TITLE_STYLE,
-                                ),
+                                html.H4("What You Can Explore", style=SECTION_TITLE_STYLE),
                                 html.P(
-                                    "Understanding how bacterial gene fitness changes across host space "
-                                    "and infection time is essential for dissecting infection biology. "
-                                    "This database provides a structured and interactive framework to "
-                                    "explore in vivo gene fitness dynamics for Vibrio cholerae."
-                                ),
-                                html.P(
-                                    "The current database is built around a spatial-temporal in vivo "
-                                    "fitness dataset, including multiple intestinal locations and time "
-                                    "points. It is designed to help users examine how genes behave across "
-                                    "intestinal niches, identify genes with related fitness patterns, "
-                                    "define clusters of similar trajectories, and explore higher-order "
-                                    "functional relationships."
-                                ),
-                                html.P(
-                                    "This platform is intended for hypothesis generation, biological "
-                                    "interpretation, and public data sharing. It also serves as a "
-                                    "foundation for future predictive analysis modules.",
-                                    style={"marginBottom": "0"},
-                                ),
-                            ]
-                        ),
-                        style={**CARD_STYLE, "height": "100%"},
-                    ),
-                    md=7,
-                    className="mb-4",
-                ),
-                dbc.Col(
-                    dbc.Card(
-                        dbc.CardBody(
-                            [
-                                html.H4(
-                                    "What this database contains",
-                                    style=SECTION_TITLE_STYLE,
+                                    "The dataset is organized around a spatial-temporal fitness matrix: "
+                                    "each gene has measured fitness values across multiple infection "
+                                    "time points and intestinal regions. The pages below expose different "
+                                    "ways to inspect, compare, rank, and contextualize those profiles.",
+                                    style={"color": TEXT_COLOR},
                                 ),
                                 html.Ul(
                                     [
-                                        html.Li("Spatial in vivo fitness profiles across intestinal locations"),
-                                        html.Li("Temporal in vivo fitness profiles across infection time points"),
-                                        html.Li("Interactive cofitness analysis"),
-                                        html.Li("Clustering of gene fitness trajectories"),
-                                        html.Li("Similarity-based profile exploration"),
-                                        html.Li("Network-based functional relationship browsing"),
-                                        html.Li("Placeholder for AI-based prediction modules"),
+                                        html.Li("Search genes by locus ID, gene name, or VC_ID."),
+                                        html.Li("Inspect spatial-temporal landscapes for individual genes and gene sets."),
+                                        html.Li("Find genes with correlated, clustered, or query-matched fitness behavior."),
+                                        html.Li("Browse network relationships derived from cofitness structure."),
                                     ],
                                     style={"marginBottom": "0"},
                                 ),
@@ -227,155 +180,91 @@ layout = dbc.Container(
                         ),
                         style={**CARD_STYLE, "height": "100%"},
                     ),
-                    md=5,
+                    lg=7,
+                    className="mb-4",
+                ),
+                dbc.Col(
+                    dbc.Card(
+                        dbc.CardBody(
+                            [
+                                html.H4("Query Identifiers", style=SECTION_TITLE_STYLE),
+                                html.P("Supported gene search terms include:", className="mb-2"),
+                                html.Ul(
+                                    [
+                                        html.Li("Locus IDs such as N900_RS04840"),
+                                        html.Li("Gene names such as motV"),
+                                        html.Li("VC_ID values such as VC_1909"),
+                                    ],
+                                    style={"marginBottom": "0.75rem"},
+                                ),
+                                html.P(
+                                    "Pages with gene search boxes resolve these identifiers to the "
+                                    "canonical locus ID used by the fitness matrix.",
+                                    style={"color": MUTED_COLOR, "marginBottom": "0"},
+                                ),
+                            ]
+                        ),
+                        style={**CARD_STYLE, "height": "100%"},
+                    ),
+                    lg=5,
                     className="mb-4",
                 ),
             ],
         ),
 
-        # ======================================================
-        # Database modules
-        # ======================================================
+        html.H4("Analysis Pages", style=SECTION_TITLE_STYLE),
+        dbc.Row(
+            [
+                module_item(
+                    "Descriptive Fitness",
+                    "Visualize single-gene fitness landscapes and summarize predefined, pasted, or uploaded gene sets across selected time and space windows.",
+                    "/descriptive-fitness",
+                ),
+                module_item(
+                    "Cofitness",
+                    "Explore pairwise cofitness correlations, heatmaps, and top positively or negatively correlated partner genes.",
+                    "/cofitness",
+                ),
+                module_item(
+                    "Clustering",
+                    "Inspect precomputed DTW and cosine clusters, view spatial or temporal fitness profiles, and download cluster assignments.",
+                    "/clustering",
+                ),
+                module_item(
+                    "Similarity Profile",
+                    "Use one gene or a gene set as a query pattern to rank genes by DTW and cosine distance.",
+                    "/similarity-profile",
+                ),
+                module_item(
+                    "Network Browser",
+                    "Place query genes in a GGM-based functional network and inspect query-connected subnetworks and ranked neighbors.",
+                    "/network-browser",
+                ),
+                module_item(
+                    "Predefined Pattern",
+                    "Define a spatial-temporal trend and identify genes whose in vivo fitness profiles match that pattern.",
+                    "/predefined-pattern",
+                ),
+            ],
+            className="mb-4",
+        ),
+
         dbc.Row(
             [
                 dbc.Col(
                     dbc.Card(
                         dbc.CardBody(
                             [
-                                html.H4(
-                                    "Database Analysis Modules",
-                                    style=SECTION_TITLE_STYLE,
-                                ),
+                                html.H4("AI Prediction", style=SECTION_TITLE_STYLE),
                                 html.P(
-                                    "The database currently includes or is being expanded to include "
-                                    "the following modules:"
-                                ),
-                                html.Ol(
-                                    [
-                                        html.Li(
-                                            [
-                                                html.Strong("Descriptive fitness"),
-                                                " – explore overall gene fitness distributions and descriptive views.",
-                                            ]
-                                        ),
-                                        html.Li(
-                                            [
-                                                html.Strong("Cofitness"),
-                                                " – examine pairwise cofitness relationships and interactive heatmaps.",
-                                            ]
-                                        ),
-                                        html.Li(
-                                            [
-                                                html.Strong("Clustering"),
-                                                " – identify groups of genes with similar spatial, temporal, or global trajectories.",
-                                            ]
-                                        ),
-                                        html.Li(
-                                            [
-                                                html.Strong("Similarity Profile"),
-                                                " – find genes with the most similar fitness profiles to a query gene or gene set.",
-                                            ]
-                                        ),
-                                        html.Li(
-                                            [
-                                                html.Strong("Network Browser"),
-                                                " – explore query genes within the broader functional network.",
-                                            ]
-                                        ),
-                                        html.Li(
-                                            [
-                                                html.Strong("AI Prediction"),
-                                                " – placeholder for future machine learning and prediction modules.",
-                                            ]
-                                        ),
-                                    ],
+                                    "The AI Prediction page is reserved for future predictive modules. "
+                                    "The current public functionality is focused on interactive exploration, "
+                                    "profile comparison, clustering, and network browsing.",
                                     style={"marginBottom": "0"},
                                 ),
                             ]
                         ),
                         style=CARD_STYLE,
-                    ),
-                    width=12,
-                )
-            ],
-            className="mb-4",
-        ),
-
-        # ======================================================
-        # Usage guide
-        # ======================================================
-        dbc.Row(
-            [
-                dbc.Col(
-                    dbc.Card(
-                        dbc.CardBody(
-                            [
-                                html.H4(
-                                    "How to use this database",
-                                    style=SECTION_TITLE_STYLE,
-                                ),
-                                html.P(
-                                    "Users can begin with the descriptive fitness module to examine global "
-                                    "fitness patterns, then move to cofitness, clustering, similarity search, "
-                                    "or network browsing for more targeted biological interpretation."
-                                ),
-                                html.P(
-                                    "Gene-level queries can be performed using gene IDs or available gene names. "
-                                    "Interactive plots support zooming, hovering, filtering, and downloadable "
-                                    "tables where available.",
-                                    style={"marginBottom": "0"},
-                                ),
-                            ]
-                        ),
-                        style=CARD_STYLE,
-                    ),
-                    width=12,
-                )
-            ],
-            className="mb-4",
-        ),
-
-        # ======================================================
-        # Citation and contact placeholders
-        # ======================================================
-        dbc.Row(
-            [
-                dbc.Col(
-                    dbc.Card(
-                        dbc.CardBody(
-                            [
-                                html.H4(
-                                    "Citation",
-                                    style=SECTION_TITLE_STYLE,
-                                ),
-                                html.P(
-                                    "If you use this database in your work, please cite the corresponding "
-                                    "publication(s).",
-                                    className="mb-2",
-                                ),
-                                html.Div(
-                                    [
-                                        html.P(
-                                            [
-                                                html.Strong("[Placeholder citation 1] "),
-                                                "Franz, Ye S., George et al. Spatial-Temporal in vivo Fitness "
-                                                "for Vibrio cholerae reveal XXXXXX. Journal / preprint information will "
-                                                "be added here.",
-                                            ],
-                                            style={"marginBottom": "0.5rem"},
-                                        ),
-                                        html.P(
-                                            [
-                                                html.Strong("[Placeholder citation 2] "),
-                                                "Ye S., Franz et al. Database, companion manuscript, or methods citation here.",
-                                            ],
-                                            style={"marginBottom": "0"},
-                                        ),
-                                    ]
-                                ),
-                            ]
-                        ),
-                        style={**CARD_STYLE, "height": "100%"},
                     ),
                     md=6,
                     className="mb-4",
@@ -384,39 +273,15 @@ layout = dbc.Container(
                     dbc.Card(
                         dbc.CardBody(
                             [
-                                html.H4(
-                                    "Contact",
-                                    style=SECTION_TITLE_STYLE,
-                                ),
+                                html.H4("Citation", style=SECTION_TITLE_STYLE),
                                 html.P(
-                                    "For questions, bug reports, collaboration interests, or data-related "
-                                    "inquiries, please contact:",
-                                    className="mb-2",
-                                ),
-                                html.P(
-                                    [
-                                        html.Strong("[Placeholder name] "),
-                                        "Matthew K. Waldor",
-                                    ],
-                                    style={"marginBottom": "0.35rem"},
-                                ),
-                                html.P(
-                                    [
-                                        html.Strong("[Placeholder email] "),
-                                        "your_email@institution.edu",
-                                    ],
-                                    style={"marginBottom": "0.35rem"},
-                                ),
-                                html.P(
-                                    [
-                                        html.Strong("[Placeholder lab / institution] "),
-                                        "Department / Lab / Institution",
-                                    ],
+                                    "If you use this database, please cite the corresponding publication "
+                                    "or data release when available.",
                                     style={"marginBottom": "0"},
                                 ),
                             ]
                         ),
-                        style={**CARD_STYLE, "height": "100%"},
+                        style=CARD_STYLE,
                     ),
                     md=6,
                     className="mb-4",
@@ -424,30 +289,14 @@ layout = dbc.Container(
             ],
         ),
 
-        # ======================================================
-        # Footer note
-        # ======================================================
-        dbc.Row(
-            [
-                dbc.Col(
-                    html.Div(
-                        [
-                            html.Hr(),
-                            html.P(
-                                "This website is under active development. Content, modules, citations, "
-                                "and contact information will be updated as the database evolves.",
-                                style={
-                                    "textAlign": "center",
-                                    "color": MUTED_COLOR,
-                                    "marginTop": "0.5rem",
-                                    "marginBottom": "0",
-                                },
-                            ),
-                        ]
-                    ),
-                    width=12,
-                )
-            ]
+        html.Hr(),
+        html.P(
+            f"{DATABASE_NAME} is under active development; page content and analysis modules may be updated as the database evolves.",
+            style={
+                "textAlign": "center",
+                "color": MUTED_COLOR,
+                "marginBottom": "0",
+            },
         ),
     ],
     fluid=True,

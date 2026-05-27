@@ -90,22 +90,25 @@ def load_annotation():
     Load gene annotation table.
 
     Expected columns:
-      locus_ID, gene_name
+      locus_ID, gene_name, KEGG_VC_number
     """
     if not os.path.exists(ANNOTATION_FILE):
-        return pd.DataFrame(columns=["Gene", "GeneName"])
+        return pd.DataFrame(columns=["Gene", "GeneName", "VC_ID"])
 
     ann = pd.read_csv(ANNOTATION_FILE)
 
     if "locus_ID" not in ann.columns:
-        return pd.DataFrame(columns=["Gene", "GeneName"])
+        return pd.DataFrame(columns=["Gene", "GeneName", "VC_ID"])
 
     if "gene_name" not in ann.columns:
         ann["gene_name"] = ""
+    if "KEGG_VC_number" not in ann.columns:
+        ann["KEGG_VC_number"] = ""
 
-    ann = ann[["locus_ID", "gene_name"]].copy()
+    ann = ann[["locus_ID", "gene_name", "KEGG_VC_number"]].copy()
     ann["locus_ID"] = ann["locus_ID"].astype(str)
     ann["gene_name"] = ann["gene_name"].fillna("").astype(str)
+    ann["KEGG_VC_number"] = ann["KEGG_VC_number"].fillna("").astype(str).str.strip()
 
     ann["GeneName"] = np.where(
         ann["gene_name"].str.strip() != "",
@@ -113,8 +116,8 @@ def load_annotation():
         ann["locus_ID"]
     )
 
-    ann = ann.rename(columns={"locus_ID": "Gene"})
-    ann = ann[["Gene", "GeneName"]].drop_duplicates()
+    ann = ann.rename(columns={"locus_ID": "Gene", "KEGG_VC_number": "VC_ID"})
+    ann = ann[["Gene", "GeneName", "VC_ID"]].drop_duplicates()
 
     return ann
 
@@ -124,7 +127,7 @@ def load_gene_lookup_options():
     """
     Build searchable dropdown options for manual query.
 
-    Users can search by either GeneName or Gene ID.  The value passed
+    Users can search by GeneName, Gene ID, or KEGG VC number.  The value passed
     downstream is always the canonical locus ID, so all existing plotting
     code continues to work.  Predefined gene sets are also included as
     selectable options.
@@ -135,7 +138,13 @@ def load_gene_lookup_options():
     lookup = pd.DataFrame({"Gene": sorted(raw_df["Gene"].astype(str).unique())})
     lookup = lookup.merge(ann, on="Gene", how="left")
     lookup["GeneName"] = lookup["GeneName"].fillna(lookup["Gene"])
+    lookup["VC_ID"] = lookup["VC_ID"].fillna("").astype(str).str.strip()
     lookup["DisplayLabel"] = lookup["GeneName"] + " | " + lookup["Gene"]
+    lookup["DisplayLabel"] = np.where(
+        lookup["VC_ID"] != "",
+        lookup["DisplayLabel"] + " | " + lookup["VC_ID"],
+        lookup["DisplayLabel"],
+    )
 
     gene_options = [
         {"label": row["DisplayLabel"], "value": row["Gene"]}
@@ -227,7 +236,8 @@ def parse_gene_tokens(text):
 
     bad_headers = {
         "gene", "genes", "geneid", "gene_id",
-        "locus_id", "locus_id,", "genename", "gene_name"
+        "locus_id", "locus_id,", "genename", "gene_name",
+        "keggvc", "kegg_vc_number"
     }
 
     tokens = [x for x in tokens if x.lower() not in bad_headers]
@@ -261,7 +271,7 @@ def get_predefined_gene_set_key(query_text):
 
 def resolve_gene_ids(gene_tokens):
     """
-    Convert gene IDs or gene names into locus IDs used in the raw data.
+    Convert gene IDs, gene names, or KEGG VC numbers into locus IDs used in the raw data.
     """
     raw_df = load_raw_data()
     ann = load_annotation()
@@ -273,9 +283,12 @@ def resolve_gene_ids(gene_tokens):
     for _, row in ann.iterrows():
         gid = str(row["Gene"])
         gname = str(row["GeneName"])
+        vc = str(row.get("VC_ID", "")).strip()
 
         gene_name_to_ids.setdefault(gid.lower(), []).append(gid)
         gene_name_to_ids.setdefault(gname.lower(), []).append(gid)
+        if vc:
+            gene_name_to_ids.setdefault(vc.lower(), []).append(gid)
 
     resolved = []
     missing = []
@@ -304,7 +317,7 @@ def parse_uploaded_gene_file(contents, filename):
       csv, tsv, txt
 
     Preferred columns:
-      locus_ID, Gene, gene, GeneName, gene_name
+      locus_ID, Gene, gene, GeneName, gene_name, VC_ID, KEGG_VC_number
 
     If no known column is found, uses the first column.
     """
@@ -333,7 +346,10 @@ def parse_uploaded_gene_file(contents, filename):
         "Gene",
         "gene",
         "GeneName",
-        "gene_name"
+        "gene_name",
+        "VC_ID",
+        "KEGGVC",
+        "KEGG_VC_number"
     ]
 
     selected_col = None
@@ -416,7 +432,7 @@ def get_query_gene_set(query_source, query_text, upload_contents, upload_filenam
 
     query_source:
       - "search": use query_text. If it matches a predefined gene set, use that gene set.
-                  Otherwise resolve gene IDs / GeneNames from annotation.
+                  Otherwise resolve gene IDs / GeneNames / KEGG VC numbers from annotation.
       - "upload": use uploaded file.
     """
     if query_source == "search":
@@ -434,7 +450,7 @@ def get_query_gene_set(query_source, query_text, upload_contents, upload_filenam
             available_sets = ", ".join(GENE_SET_FILES.keys())
             raise ValueError(
                 "No valid genes found from the query. "
-                "Please enter a valid gene ID, gene name, or predefined gene set name. "
+                "Please enter a valid gene ID, gene name, KEGG VC number, or predefined gene set name. "
                 f"Available predefined gene sets: {available_sets}"
             )
 
@@ -447,7 +463,7 @@ def get_query_gene_set(query_source, query_text, upload_contents, upload_filenam
         if len(resolved) == 0:
             raise ValueError(
                 "No valid genes found from uploaded file. "
-                "Please upload a file containing locus_ID, Gene, gene, GeneName, or gene_name."
+                "Please upload a file containing locus_ID, Gene, gene, GeneName, gene_name, VC_ID, or KEGG_VC_number."
             )
 
         return make_custom_gene_set_df(resolved, label="Uploaded query"), missing, f"Using uploaded file: {upload_filename}"
@@ -509,7 +525,7 @@ def build_query_summary(query_gene_set_df, missing_genes, query_status, single_q
                     html.Strong("Not found in annotation/raw data: "),
                     missing_preview,
                     html.Br(),
-                    "Please type a valid gene ID or try another gene name."
+                    "Please type a valid gene ID, gene name, or KEGG VC number."
                 ],
                 className="mt-2"
             )
@@ -678,6 +694,7 @@ def compute_similarity_from_gene_set_df(
     sim_df = pd.DataFrame(results)
     sim_df = sim_df.merge(ann, on="Gene", how="left")
     sim_df["GeneName"] = sim_df["GeneName"].fillna(sim_df["Gene"])
+    sim_df["VC_ID"] = sim_df["VC_ID"].fillna("").astype(str).str.strip()
     sim_df = sim_df.sort_values("DTW_dist").reset_index(drop=True)
 
     return sim_df
@@ -703,13 +720,13 @@ def make_top_compare(sim_df, top_n):
     )
     top_cosine["rank_cosine"] = np.arange(1, len(top_cosine) + 1)
 
-    top_dtw = top_dtw[["Gene", "GeneName", "DTW_dist", "rank_DTW"]]
-    top_cosine = top_cosine[["Gene", "GeneName", "Cosine_dist", "rank_cosine"]]
+    top_dtw = top_dtw[["Gene", "GeneName", "VC_ID", "DTW_dist", "rank_DTW"]]
+    top_cosine = top_cosine[["Gene", "GeneName", "VC_ID", "Cosine_dist", "rank_cosine"]]
 
     merged = pd.merge(
         top_dtw,
         top_cosine,
-        on=["Gene", "GeneName"],
+        on=["Gene", "GeneName", "VC_ID"],
         how="outer"
     )
 
@@ -906,12 +923,16 @@ def prepare_plot_data(
 
     df2 = df2.merge(ann, on="Gene", how="left")
     df2["GeneName"] = df2["GeneName"].fillna(df2["Gene"])
+    df2["VC_ID"] = df2["VC_ID"].fillna("").astype(str).str.strip()
 
     query_df = df[
         (df["Gene"].isin(input_genes)) &
         (df["Time"].isin(timepoints)) &
         (df["Space"].isin(spacepoints))
     ].copy()
+    query_df = query_df.merge(ann, on="Gene", how="left")
+    query_df["GeneName"] = query_df["GeneName"].fillna(query_df["Gene"])
+    query_df["VC_ID"] = query_df["VC_ID"].fillna("").astype(str).str.strip()
 
     query_df["Time_num"] = query_df["Time"].map({t: i + 1 for i, t in enumerate(timepoints)})
     query_df["Space_num"] = query_df["Space"].map({s: i + 1 for i, s in enumerate(spacepoints)})
@@ -995,6 +1016,7 @@ def make_temporal_figure(
 
         for gene, gdf in top_df.groupby("Gene"):
             gene_name = str(gdf["GeneName"].iloc[0]) if "GeneName" in gdf.columns else str(gene)
+            vc_id = str(gdf["VC_ID"].iloc[0]).strip() if "VC_ID" in gdf.columns else ""
 
             xfit, yfit = fit_curve(
                 gdf["Time_num"],
@@ -1017,6 +1039,7 @@ def make_temporal_figure(
                     hovertemplate=(
                         f"GeneName: {gene_name}<br>"
                         f"Gene ID: {gene}<br>"
+                        f"VC_ID: {vc_id}<br>"
                         f"Space: {space}<br>"
                         "logFC: %{y:.3f}<extra></extra>"
                     ),
@@ -1031,6 +1054,9 @@ def make_temporal_figure(
             input_df = space_df[space_df["gene_group"] == "Input gene"]
 
             for label, gdf in input_df.groupby("Gene_label"):
+                gene_id = str(gdf["Gene"].iloc[0]) if "Gene" in gdf.columns and len(gdf) > 0 else ""
+                gene_name = str(gdf["GeneName"].iloc[0]) if "GeneName" in gdf.columns and len(gdf) > 0 else label
+                vc_id = str(gdf["VC_ID"].iloc[0]).strip() if "VC_ID" in gdf.columns and len(gdf) > 0 else ""
                 xfit, yfit = fit_curve(
                     gdf["Time_num"],
                     gdf["logFC"],
@@ -1062,6 +1088,9 @@ def make_temporal_figure(
                         showlegend=show_legend_flag,
                         hovertemplate=(
                             f"Input gene: {label}<br>"
+                            f"GeneName: {gene_name}<br>"
+                            f"Gene ID: {gene_id}<br>"
+                            f"VC_ID: {vc_id}<br>"
                             f"Space: {space}<br>"
                             "logFC: %{y:.3f}<extra></extra>"
                         ),
@@ -1077,6 +1106,15 @@ def make_temporal_figure(
             )
             x_source = qdf["Time_num"]
             y_source = qdf["logFC"]
+            query_hover_gene = str(qdf["Gene"].iloc[0]) if "Gene" in qdf.columns and len(qdf) > 0 else ""
+            query_hover_name = str(qdf["GeneName"].iloc[0]) if "GeneName" in qdf.columns and len(qdf) > 0 else query_curve_label
+            query_hover_vc = str(qdf["VC_ID"].iloc[0]).strip() if "VC_ID" in qdf.columns and len(qdf) > 0 else ""
+            query_hover_prefix = (
+                f"{query_curve_label}<br>"
+                f"GeneName: {query_hover_name}<br>"
+                f"Gene ID: {query_hover_gene}<br>"
+                f"VC_ID: {query_hover_vc}<br>"
+            )
         else:
             qdf = (
                 query_curve_df[query_curve_df["Space"] == space]
@@ -1086,6 +1124,7 @@ def make_temporal_figure(
             )
             x_source = qdf["Time_num"]
             y_source = qdf["logFC"]
+            query_hover_prefix = f"{query_curve_label}<br>"
 
         xfit, yfit = fit_curve(
             x_source,
@@ -1103,7 +1142,7 @@ def make_temporal_figure(
                 legendgroup=query_curve_label,
                 showlegend=show_legend_query,
                 hovertemplate=(
-                    f"{query_curve_label}<br>"
+                    query_hover_prefix +
                     f"Space: {space}<br>"
                     "logFC: %{y:.3f}<extra></extra>"
                 ),
@@ -1185,6 +1224,7 @@ def make_spatial_figure(
 
         for gene, gdf in top_df.groupby("Gene"):
             gene_name = str(gdf["GeneName"].iloc[0]) if "GeneName" in gdf.columns else str(gene)
+            vc_id = str(gdf["VC_ID"].iloc[0]).strip() if "VC_ID" in gdf.columns else ""
 
             xfit, yfit = fit_curve(
                 gdf["Space_num"],
@@ -1207,6 +1247,7 @@ def make_spatial_figure(
                     hovertemplate=(
                         f"GeneName: {gene_name}<br>"
                         f"Gene ID: {gene}<br>"
+                        f"VC_ID: {vc_id}<br>"
                         f"Time: {time}<br>"
                         "logFC: %{y:.3f}<extra></extra>"
                     ),
@@ -1221,6 +1262,9 @@ def make_spatial_figure(
             input_df = time_df[time_df["gene_group"] == "Input gene"]
 
             for label, gdf in input_df.groupby("Gene_label"):
+                gene_id = str(gdf["Gene"].iloc[0]) if "Gene" in gdf.columns and len(gdf) > 0 else ""
+                gene_name = str(gdf["GeneName"].iloc[0]) if "GeneName" in gdf.columns and len(gdf) > 0 else label
+                vc_id = str(gdf["VC_ID"].iloc[0]).strip() if "VC_ID" in gdf.columns and len(gdf) > 0 else ""
                 xfit, yfit = fit_curve(
                     gdf["Space_num"],
                     gdf["logFC"],
@@ -1252,6 +1296,9 @@ def make_spatial_figure(
                         showlegend=show_legend_flag,
                         hovertemplate=(
                             f"Input gene: {label}<br>"
+                            f"GeneName: {gene_name}<br>"
+                            f"Gene ID: {gene_id}<br>"
+                            f"VC_ID: {vc_id}<br>"
                             f"Time: {time}<br>"
                             "logFC: %{y:.3f}<extra></extra>"
                         ),
@@ -1267,6 +1314,15 @@ def make_spatial_figure(
             )
             x_source = qdf["Space_num"]
             y_source = qdf["logFC"]
+            query_hover_gene = str(qdf["Gene"].iloc[0]) if "Gene" in qdf.columns and len(qdf) > 0 else ""
+            query_hover_name = str(qdf["GeneName"].iloc[0]) if "GeneName" in qdf.columns and len(qdf) > 0 else query_curve_label
+            query_hover_vc = str(qdf["VC_ID"].iloc[0]).strip() if "VC_ID" in qdf.columns and len(qdf) > 0 else ""
+            query_hover_prefix = (
+                f"{query_curve_label}<br>"
+                f"GeneName: {query_hover_name}<br>"
+                f"Gene ID: {query_hover_gene}<br>"
+                f"VC_ID: {query_hover_vc}<br>"
+            )
         else:
             qdf = (
                 query_curve_df[query_curve_df["Time"] == time]
@@ -1276,6 +1332,7 @@ def make_spatial_figure(
             )
             x_source = qdf["Space_num"]
             y_source = qdf["logFC"]
+            query_hover_prefix = f"{query_curve_label}<br>"
 
         xfit, yfit = fit_curve(
             x_source,
@@ -1293,7 +1350,7 @@ def make_spatial_figure(
                 legendgroup=query_curve_label,
                 showlegend=show_legend_query,
                 hovertemplate=(
-                    f"{query_curve_label}<br>"
+                    query_hover_prefix +
                     f"Time: {time}<br>"
                     "logFC: %{y:.3f}<extra></extra>"
                 ),
@@ -1347,7 +1404,7 @@ layout = dbc.Container(
         html.P(
             "Interactive Python/Plotly version of the spatial-temporal similarity visualization. "
             "By default, the app uses the predefined motV gene set. "
-            "Users can also search any gene of interest by gene name or gene ID, or upload a gene list. "
+            "Users can also search any gene of interest by gene name, gene ID, or KEGG VC number, or upload a gene list. "
             "If the query has only one gene, that gene is directly used as the query pattern. "
             "If the query has 2 or more genes, the median pattern is used.",
             className="lead"
@@ -1387,11 +1444,11 @@ layout = dbc.Container(
                             searchable=True,
                             clearable=True,
                             placeholder=(
-                                "Type GeneName or Gene ID, e.g. motV or N900_RS00010"
+                                "Type GeneName, Gene ID, or KEGG VC number, e.g. motV, N900_RS00010, or VC_1909"
                             ),
                         ),
                         html.Small(
-                            f"Start typing to search GeneName/Gene ID. Available predefined gene sets: {available_gene_sets_text}",
+                            f"Start typing to search GeneName/Gene ID/KEGG VC number. Available predefined gene sets: {available_gene_sets_text}",
                             className="text-muted",
                         ),
                         html.Div(id="similarity-query-summary"),
@@ -1761,7 +1818,7 @@ def update_similarity_page(
             },
         )
 
-        preferred_cols = ["Gene", "GeneName", "DTW_dist", "Cosine_dist"]
+        preferred_cols = ["Gene", "GeneName", "VC_ID", "DTW_dist", "Cosine_dist"]
         cols = [c for c in preferred_cols if c in sim_df.columns]
         remaining = [c for c in sim_df.columns if c not in cols]
         sim_df_show = sim_df[cols + remaining].copy()
@@ -1812,7 +1869,7 @@ def update_similarity_page(
             [
                 html.Strong("Query not recognized. "),
                 "The input you typed was not found in the annotation table or raw data. ",
-                "Please type a valid gene ID, try another gene name, or use a predefined gene set name such as motV."
+                "Please type a valid gene ID, gene name, KEGG VC number, or use a predefined gene set name such as motV."
             ],
             color="warning",
             className="mt-2"

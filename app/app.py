@@ -6,7 +6,7 @@ app = dash.Dash(
     use_pages=True,
     external_stylesheets=[dbc.themes.FLATLY],
     suppress_callback_exceptions=True,
-    title="Spatial-Temporal Gene Fitness Database"
+    title="Spatial-Temporal Gene Fitness Database in vivo for Vibrio cholerae"
 )
 
 server = app.server

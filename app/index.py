@@ -14,7 +14,7 @@ navbar = dbc.NavbarSimple(
         dbc.NavItem(dbc.NavLink("Predefined Pattern", href="/predefined-pattern")),
         dbc.NavItem(dbc.NavLink("AI Prediction", href="/ai-prediction")),
     ],
-    brand="Spatial-Temporal in vivo Fitness Database for Vibrio Cholerae",
+    brand="Spatial-Temporal Gene Fitness Database in vivo for Vibrio cholerae",
     brand_href="/",
     color="primary",
     dark=True,
