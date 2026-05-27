@@ -1,6 +1,6 @@
-# Spatial-Temporal in vivo Fitness Database for *Vibrio cholerae*
+# Spatial-Temporal Gene Fitness Database in vivo for Vibrio cholerae
 
-This repository contains an interactive Dash/Plotly web application for exploring spatial-temporal in vivo gene fitness patterns of *Vibrio cholerae*.
+This repository contains an interactive Dash/Plotly web application for the Spatial-Temporal Gene Fitness Database in vivo for Vibrio cholerae.
 
 The database enables visualization and analysis of genome-wide fitness dynamics across spatial regions and infection timepoints, including clustering analysis, cofitness analysis, similarity profiling, predefined pattern searching, and network-based exploration.
 
