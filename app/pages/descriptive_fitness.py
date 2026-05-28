@@ -554,6 +554,8 @@ def summarize_single_gene_landscape(gene_id, selected_times=None, selected_space
     gene_name = finite["GeneName"].iloc[0]
     vc_id = finite["VC_ID"].iloc[0] if "VC_ID" in finite.columns else get_gene_vc_id(gene_id)
     display_label = f"{gene_name} | {gene_id}"
+    if str(vc_id).strip() != "":
+        display_label = f"{display_label} | {vc_id}"
 
     max_row = finite.loc[finite["Beta"].idxmax()]
     min_row = finite.loc[finite["Beta"].idxmin()]
