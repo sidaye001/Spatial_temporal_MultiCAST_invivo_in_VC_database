@@ -352,18 +352,51 @@ def list_gene_set_files():
     return sorted(files, key=lambda x: x.lower())
 
 
+def resolve_gene_set_file_path(filename):
+    if filename is None or filename == "":
+        return None
+
+    exact_path = os.path.join(GENE_SET_DIR, filename)
+    if os.path.exists(exact_path):
+        return exact_path
+
+    if not os.path.exists(GENE_SET_DIR):
+        return None
+
+    files = list_gene_set_files()
+    filename_lower = str(filename).lower()
+    filename_stem = os.path.splitext(filename_lower)[0]
+
+    for candidate in files:
+        if candidate.lower() == filename_lower:
+            return os.path.join(GENE_SET_DIR, candidate)
+
+    for candidate in files:
+        candidate_stem = os.path.splitext(candidate.lower())[0]
+        candidate_aliases = {
+            candidate_stem,
+            candidate_stem.replace("_genes", ""),
+            candidate_stem.replace("_gene", ""),
+        }
+        if filename_stem in candidate_aliases:
+            return os.path.join(GENE_SET_DIR, candidate)
+
+    return None
+
+
 def read_gene_set_file(filename):
     if filename is None or filename == "":
         return []
 
-    path = os.path.join(GENE_SET_DIR, filename)
-
-    if not os.path.exists(path):
+    path = resolve_gene_set_file_path(filename)
+    if path is None:
         return []
 
-    if filename.lower().endswith(".csv"):
+    file_label = os.path.basename(path)
+
+    if file_label.lower().endswith(".csv"):
         df = pd.read_csv(path)
-    elif filename.lower().endswith(".tsv"):
+    elif file_label.lower().endswith(".tsv"):
         df = pd.read_csv(path, sep="\t")
     else:
         df = pd.read_csv(path, sep=None, engine="python", header=None)
@@ -372,8 +405,8 @@ def read_gene_set_file(filename):
         return []
 
     preferred_cols = [
-        "Gene", "gene", "GeneID", "geneID", "locus_ID",
-        "locus_id", "locus", "GeneName", "gene_name",
+        "locus_ID", "locus_id", "locus", "GeneID", "geneID",
+        "Gene", "GeneName", "gene_name", "gene",
         "VC_ID", "KEGGVC", "KEGG_VC_number",
         "X", "x"
     ]
@@ -418,8 +451,9 @@ def parse_uploaded_gene_file(contents, filename):
         return []
 
     preferred_cols = [
-        "Gene", "gene", "GeneID", "geneID", "locus_ID",
-        "locus_id", "GeneName", "gene_name", "VC_ID", "KEGGVC", "KEGG_VC_number", "X", "x"
+        "locus_ID", "locus_id", "GeneID", "geneID",
+        "Gene", "GeneName", "gene_name", "gene",
+        "VC_ID", "KEGGVC", "KEGG_VC_number", "X", "x"
     ]
 
     selected_col = None
@@ -458,8 +492,9 @@ def get_gene_set_inputs(gene_set_file, manual_text, upload_contents, upload_file
 
     gene_ids, missing = resolve_gene_list(tokens)
 
-    if gene_set_file:
-        gene_set_label = os.path.splitext(os.path.basename(gene_set_file))[0]
+    resolved_path = resolve_gene_set_file_path(gene_set_file)
+    if resolved_path is not None:
+        gene_set_label = os.path.splitext(os.path.basename(resolved_path))[0]
     elif upload_filename:
         gene_set_label = os.path.splitext(os.path.basename(upload_filename))[0]
     else:

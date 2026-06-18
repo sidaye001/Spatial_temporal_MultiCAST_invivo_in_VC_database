@@ -275,8 +275,7 @@ layout = dbc.Container(
                             [
                                 html.H4("Citation", style=SECTION_TITLE_STYLE),
                                 html.P(
-                                    "If you use this database, please cite the corresponding publication "
-                                    "or data release when available.",
+                                    "If you use this database, please cite the corresponding publication or contact mwaldor at bwh dot harvard dot edu",
                                     style={"marginBottom": "0"},
                                 ),
                             ]
