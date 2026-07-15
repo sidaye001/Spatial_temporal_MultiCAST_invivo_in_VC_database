@@ -94,40 +94,6 @@ layout = dbc.Container(
             [
                 dbc.Col(
                     [
-                        html.H1(
-                            DATABASE_NAME,
-                            style={
-                                "fontWeight": "700",
-                                "color": TITLE_COLOR,
-                                "lineHeight": "1.15",
-                                "marginBottom": "0.65rem",
-                            },
-                        ),
-                        html.P(
-                            "An interactive Dash/Plotly resource for exploring genome-wide "
-                            "in vivo fitness measurements across infection time points and "
-                            "gastrointestinal locations.",
-                            className="lead",
-                            style={"color": TEXT_COLOR, "marginBottom": "0.4rem"},
-                        ),
-                        html.P(
-                            "The current database supports single-gene inspection, gene-set summaries, "
-                            "cofitness analysis, clustering, query-based profile matching, predefined "
-                            "pattern search, and network exploration. Gene queries support locus IDs, "
-                            "gene names, and VC_ID values from the annotation table.",
-                            style={"color": "#56616b", "marginBottom": "0"},
-                        ),
-                    ],
-                    width=12,
-                )
-            ],
-            className="mb-4",
-        ),
-
-        dbc.Row(
-            [
-                dbc.Col(
-                    [
                         html.Img(
                             src=HOME_IMAGE_SRC,
                             style={
