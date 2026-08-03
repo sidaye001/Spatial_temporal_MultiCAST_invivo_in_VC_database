@@ -133,7 +133,7 @@ def load_guide_counts():
     """Return dict: gene_id → n_guides (int), from gene_good_guides_list_final_anno.csv."""
     if not os.path.exists(GUIDES_FILE):
         return {}
-    df = pd.read_excel(GUIDES_FILE, usecols=["Gene", "n_guides"])
+    df = pd.read_csv(GUIDES_FILE, usecols=["Gene", "n_guides"])
     df["Gene"] = df["Gene"].astype(str).str.strip()
     df["n_guides"] = pd.to_numeric(df["n_guides"], errors="coerce")
     df = df.dropna(subset=["n_guides"])
