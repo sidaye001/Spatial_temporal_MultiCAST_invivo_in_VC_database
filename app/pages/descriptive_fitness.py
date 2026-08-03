@@ -29,6 +29,12 @@ RAW_FILE = os.path.join(
     "Spatial_temporal_MultiSCAST_FC_final_capping.csv"
 )
 
+GUIDES_FILE = os.path.join(
+    DATA_DIR,
+    "raw",
+    "gene_good_guides_list_final.csv"
+)
+
 ANNOTATION_FILE = os.path.join(
     DATA_DIR,
     "annotation",
@@ -120,6 +126,24 @@ def load_raw_data():
     df["Condition"] = df["Time"].astype(str) + "_" + df["Space"].astype(str)
 
     return df
+
+
+@lru_cache(maxsize=1)
+def load_guide_counts():
+    if not os.path.exists(GUIDES_FILE):
+        return {}
+    df = pd.read_csv(GUIDES_FILE, usecols=["gene_id", "n_guides"])
+    df["gene_id"] = df["gene_id"].astype(str).str.strip()
+    df["n_guides"] = pd.to_numeric(df["n_guides"], errors="coerce")
+    return dict(zip(df["gene_id"], df["n_guides"]))
+
+
+def get_guide_count(gene_id):
+    counts = load_guide_counts()
+    val = counts.get(str(gene_id).strip())
+    if val is None or (isinstance(val, float) and np.isnan(val)):
+        return None
+    return int(val)
 
 
 @lru_cache(maxsize=1)
@@ -868,11 +892,17 @@ def make_single_gene_surface_contour(
         col=2,
     )
 
+    _n_guides = get_guide_count(gene_id)
+    _guide_str = str(_n_guides) if _n_guides is not None else "N/A"
+
     fig.update_layout(
         template="plotly_white",
         height=720,
         margin=dict(l=30, r=120, t=90, b=40),
-        title=f"Spatial-temporal in vivo fitness landscape for {display_label}",
+        title=(
+            f"Spatial-temporal in vivo fitness landscape for {display_label}"
+            f"<br><sup>Good guides: {_guide_str}</sup>"
+        ),
         showlegend=False,
     )
 
