@@ -32,7 +32,7 @@ RAW_FILE = os.path.join(
 GUIDES_FILE = os.path.join(
     DATA_DIR,
     "raw",
-    "gene_good_guides_list_final.csv"
+    "gene_good_guides_list_final_anno.csv"
 )
 
 ANNOTATION_FILE = os.path.join(
@@ -130,20 +130,21 @@ def load_raw_data():
 
 @lru_cache(maxsize=1)
 def load_guide_counts():
+    """Return dict: gene_id → n_guides (int), from gene_good_guides_list_final_anno.csv."""
     if not os.path.exists(GUIDES_FILE):
         return {}
-    df = pd.read_csv(GUIDES_FILE, usecols=["gene_id", "n_guides"])
-    df["gene_id"] = df["gene_id"].astype(str).str.strip()
+    df = pd.read_excel(GUIDES_FILE, usecols=["Gene", "n_guides"])
+    df["Gene"] = df["Gene"].astype(str).str.strip()
     df["n_guides"] = pd.to_numeric(df["n_guides"], errors="coerce")
-    return dict(zip(df["gene_id"], df["n_guides"]))
+    df = df.dropna(subset=["n_guides"])
+    return dict(zip(df["Gene"], df["n_guides"].astype(int)))
 
 
 def get_guide_count(gene_id):
+    """Return n_guides for gene_id, or None if not found."""
     counts = load_guide_counts()
     val = counts.get(str(gene_id).strip())
-    if val is None or (isinstance(val, float) and np.isnan(val)):
-        return None
-    return int(val)
+    return int(val) if val is not None else None
 
 
 @lru_cache(maxsize=1)
