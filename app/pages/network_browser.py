@@ -957,6 +957,16 @@ def make_candidate_subnetwork_figure(
         max_edges_per_candidate=max_edges_per_candidate
     )
 
+    if not show_negative_edges:
+        # Drop negative edges, then keep only nodes that still have at least one
+        # remaining (positive/unknown) edge. Nodes connected to the query set
+        # solely through negative edges are removed as well.
+        edges_to_plot = edges_to_plot[edges_to_plot["edge_type"] != "negative"].copy()
+        kept_nodes = pd.unique(
+            pd.concat([edges_to_plot["source"], edges_to_plot["target"]], axis=0)
+        )
+        node_sub = node_sub[node_sub["Gene"].isin(kept_nodes)].copy()
+
     G = nx.Graph()
 
     for _, row in node_sub.iterrows():
@@ -994,14 +1004,10 @@ def make_candidate_subnetwork_figure(
     }
 
     for u, v, d in G.edges(data=True):
-        edge_type = d.get("edge_type", "unknown")
-
-        if not show_negative_edges and edge_type == "negative":
-            continue
-
         x0, y0 = pos[u]
         x1, y1 = pos[v]
 
+        edge_type = d.get("edge_type", "unknown")
         edge_color = edge_type_color.get(edge_type, "rgba(85,85,85,0.82)")
 
         partial_corr = float(d.get("partial_corr", 0.0))
