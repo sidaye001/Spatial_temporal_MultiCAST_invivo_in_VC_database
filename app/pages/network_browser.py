@@ -945,6 +945,7 @@ def make_candidate_subnetwork_figure(
     layout_seed,
     label_query_genes=True,
     label_top_candidates=True,
+    show_negative_edges=True,
     query_color=DEFAULT_QUERY_COLOR,
 ):
     query_color = normalize_color(query_color, DEFAULT_QUERY_COLOR)
@@ -993,10 +994,14 @@ def make_candidate_subnetwork_figure(
     }
 
     for u, v, d in G.edges(data=True):
+        edge_type = d.get("edge_type", "unknown")
+
+        if not show_negative_edges and edge_type == "negative":
+            continue
+
         x0, y0 = pos[u]
         x1, y1 = pos[v]
 
-        edge_type = d.get("edge_type", "unknown")
         edge_color = edge_type_color.get(edge_type, "rgba(85,85,85,0.82)")
 
         partial_corr = float(d.get("partial_corr", 0.0))
@@ -1677,8 +1682,9 @@ layout = dbc.Container(
                             options=[
                                 {"label": "Label query genes", "value": "label_query"},
                                 {"label": "Label top candidates", "value": "label_candidates"},
+                                {"label": "Show negative edges", "value": "show_negative_edges"},
                             ],
-                            value=["label_query", "label_candidates"],
+                            value=["label_query", "label_candidates", "show_negative_edges"],
                             inline=True,
                         ),
                     ],
@@ -1926,6 +1932,7 @@ def update_candidate_network(
 
         label_query = "label_query" in display_options
         label_candidates = "label_candidates" in display_options
+        show_negative_edges = "show_negative_edges" in display_options
 
         fig, candidate_rank, top_candidates, edges_to_plot, node_sub = make_candidate_subnetwork_figure(
             query_genes=query_genes,
@@ -1935,6 +1942,7 @@ def update_candidate_network(
             layout_seed=int(layout_seed),
             label_query_genes=label_query,
             label_top_candidates=label_candidates,
+            show_negative_edges=show_negative_edges,
             query_color=query_color,
         )
 
