@@ -128,6 +128,34 @@ def load_raw_data():
     return df
 
 
+@lru_cache(maxsize=8)
+def get_absolute_beta_color_limit(percentile=98):
+    """
+    Fixed, dataset-wide Beta color limit used for the "absolute scale" option
+    on the single-gene landscape plot, so that Beta=0 is always shown as white
+    and colors are comparable across genes regardless of each gene's own range.
+
+    Uses the given percentile of |Beta| across the entire dataset (rather than
+    the true max) so a handful of extreme outlier genes don't compress the
+    color contrast for everyone else. Values beyond this limit are shown
+    saturated at the darkest color; exact values are still shown on hover.
+    """
+    raw = load_raw_data()
+    beta = pd.to_numeric(raw["Beta"], errors="coerce")
+    finite = beta[np.isfinite(beta)]
+
+    if finite.empty:
+        return 1.0
+
+    abs_lim = np.nanpercentile(np.abs(finite), percentile)
+    if abs_lim == 0:
+        abs_lim = np.nanmax(np.abs(finite))
+    if abs_lim == 0:
+        abs_lim = 1.0
+
+    return float(abs_lim)
+
+
 @lru_cache(maxsize=1)
 def load_guide_counts():
     """Return dict: gene_id → n_guides (int), from gene_good_guides_list_final_anno.csv."""
@@ -680,6 +708,8 @@ def make_single_gene_surface_contour(
     show_contour_lines="show",
     selected_times=None,
     selected_spaces=None,
+    color_scale_mode="absolute",
+    color_scale_percentile=98,
 ):
     selected_times, selected_spaces = validate_time_space_selection(
         selected_times,
@@ -728,6 +758,18 @@ def make_single_gene_surface_contour(
     selected_time_nums = [TIME_NUM_MAP[t] for t in selected_times]
     selected_space_nums = [SPACE_NUM_MAP[s] for s in selected_spaces]
 
+    if color_scale_mode == "absolute":
+        color_lim = get_absolute_beta_color_limit(percentile=color_scale_percentile)
+        color_min, color_max = -color_lim, color_lim
+        color_zmid = 0
+    else:
+        # Relative scale: use this gene's own actual Beta min/max (matches the
+        # original, pre-toggle behavior), which is not necessarily centered on 0.
+        color_min, color_max = min_beta, max_beta
+        if color_min == color_max:
+            color_min, color_max = color_min - 1.0, color_max + 1.0
+        color_zmid = None
+
     fig = make_subplots(
         rows=1,
         cols=2,
@@ -745,6 +787,8 @@ def make_single_gene_surface_contour(
             y=selected_space_nums,
             z=z_plot,
             colorscale=NARROW_WHITE_BROWN_BLUE,
+            cmin=color_min,
+            cmax=color_max,
             colorbar=dict(
                 title="Beta",
                 x=0.44,
@@ -782,6 +826,9 @@ def make_single_gene_surface_contour(
             y=selected_spaces,
             z=z_plot,
             colorscale=NARROW_WHITE_BROWN_BLUE,
+            zmin=color_min,
+            zmax=color_max,
+            zmid=color_zmid,
             colorbar=dict(
                 title="Beta",
                 x=1.065,
@@ -1650,6 +1697,71 @@ layout = dbc.Container(
             [
                 dbc.Col(
                     [
+                        html.Label("Beta color scale"),
+                        dcc.RadioItems(
+                            id="desc-single-color-scale-mode",
+                            options=[
+                                {
+                                    "label": "Absolute scale (fixed across all genes)",
+                                    "value": "absolute",
+                                },
+                                {
+                                    "label": "Relative scale (this gene's own range)",
+                                    "value": "relative",
+                                },
+                            ],
+                            value="absolute",
+                            inline=True,
+                            inputStyle={"marginRight": "6px", "marginLeft": "12px"},
+                        ),
+                        html.Small(
+                            "Default uses an absolute scale so Beta=0 is always white and colors are "
+                            "comparable across genes. Relative scale stretches the color range to this "
+                            "gene's own min/max, which can be misleading when comparing across genes.",
+                            className="text-muted",
+                        ),
+                        html.Div(
+                            [
+                                html.Label(
+                                    "Absolute scale cap (percentile of |Beta|)",
+                                    className="mt-2",
+                                ),
+                                dcc.RadioItems(
+                                    id="desc-single-color-scale-percentile",
+                                    options=[
+                                        {"label": "95th", "value": 95},
+                                        {"label": "98th", "value": 98},
+                                        {"label": "99th", "value": 99},
+                                    ],
+                                    value=98,
+                                    inline=True,
+                                    inputStyle={"marginRight": "6px", "marginLeft": "12px"},
+                                ),
+                                html.Small(
+                                    "The absolute scale caps its color range at this percentile of |Beta| "
+                                    "across the whole dataset, instead of the true dataset max, so a handful "
+                                    "of extreme outlier genes don't compress the color contrast for everyone "
+                                    "else. A lower percentile (95th) boosts contrast for most genes but "
+                                    "saturates more outliers to the darkest color; a higher percentile (99th) "
+                                    "preserves more of the true dynamic range but gives less contrast for "
+                                    "typical genes. This only affects the Absolute scale option above; exact "
+                                    "Beta values are always shown on hover regardless of which percentile is "
+                                    "chosen.",
+                                    className="text-muted",
+                                ),
+                            ],
+                        ),
+                    ],
+                    md=12,
+                ),
+            ],
+            className="mb-3",
+        ),
+
+        dbc.Row(
+            [
+                dbc.Col(
+                    [
                         html.Label("Single-gene time window"),
                         dcc.Dropdown(
                             id="desc-single-gene-time-window",
@@ -1867,10 +1979,19 @@ layout = dbc.Container(
     Output("desc-single-gene-table-wrapper", "children"),
     Input("desc-single-gene", "value"),
     Input("desc-single-contour-lines", "value"),
+    Input("desc-single-color-scale-mode", "value"),
+    Input("desc-single-color-scale-percentile", "value"),
     Input("desc-single-gene-time-window", "value"),
     Input("desc-single-gene-space-window", "value"),
 )
-def update_single_gene_plot(gene_id, show_contour_lines, selected_times, selected_spaces):
+def update_single_gene_plot(
+    gene_id,
+    show_contour_lines,
+    color_scale_mode,
+    color_scale_percentile,
+    selected_times,
+    selected_spaces,
+):
     try:
         if gene_id is None:
             fig = go.Figure()
@@ -1887,6 +2008,8 @@ def update_single_gene_plot(gene_id, show_contour_lines, selected_times, selecte
             show_contour_lines=show_contour_lines,
             selected_times=selected_times,
             selected_spaces=selected_spaces,
+            color_scale_mode=color_scale_mode,
+            color_scale_percentile=color_scale_percentile,
         )
         table_component = make_single_gene_table_component(landscape)
 
