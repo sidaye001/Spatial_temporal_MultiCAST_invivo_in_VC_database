@@ -1653,6 +1653,26 @@ layout = dbc.Container(
 
         html.H4("Top closest genes"),
 
+        dbc.Row(
+            [
+                dbc.Col(
+                    [
+                        html.Label("Rows to display (e.g. 100, 200, 300, ...)"),
+                        dbc.Input(
+                            id="similarity-top-table-page-size",
+                            type="number",
+                            min=10,
+                            step=100,
+                            value=100,
+                            placeholder="Enter rows to display",
+                        ),
+                    ],
+                    md=3,
+                ),
+            ],
+            className="mb-2",
+        ),
+
         dbc.Button(
             "Download top closest genes table",
             id="download-top-table-button",
@@ -1704,6 +1724,7 @@ layout = dbc.Container(
     Input("similarity-display-options", "value"),
     Input("similarity-upload-gene-list", "contents"),
     State("similarity-upload-gene-list", "filename"),
+    Input("similarity-top-table-page-size", "value"),
 )
 def update_similarity_page(
     query_source,
@@ -1718,7 +1739,8 @@ def update_similarity_page(
     fit_method,
     display_options,
     upload_contents,
-    upload_filename
+    upload_filename,
+    top_table_page_size
 ):
     try:
         show_input = "show_input" in display_options
@@ -1796,10 +1818,19 @@ def update_similarity_page(
             if len(missing_genes) > 10:
                 upload_status += f" ... and {len(missing_genes) - 10} more."
 
+        try:
+            top_table_page_size_value = int(top_table_page_size)
+        except (TypeError, ValueError):
+            top_table_page_size_value = 100
+        top_table_page_size_value = max(1, top_table_page_size_value)
+
+        top_compare_display = top_compare.copy()
+        top_compare_display.insert(0, "Rank", np.arange(1, len(top_compare_display) + 1))
+
         top_table = dash_table.DataTable(
-            data=top_compare.to_dict("records"),
-            columns=[{"name": c, "id": c} for c in top_compare.columns],
-            page_size=15,
+            data=top_compare_display.to_dict("records"),
+            columns=[{"name": c, "id": c} for c in top_compare_display.columns],
+            page_size=top_table_page_size_value,
             filter_action="native",
             sort_action="native",
             style_table={"overflowX": "auto"},
@@ -1823,9 +1854,12 @@ def update_similarity_page(
         remaining = [c for c in sim_df.columns if c not in cols]
         sim_df_show = sim_df[cols + remaining].copy()
 
+        sim_df_display = sim_df_show.head(500).copy()
+        sim_df_display.insert(0, "Rank", np.arange(1, len(sim_df_display) + 1))
+
         full_table = dash_table.DataTable(
-            data=sim_df_show.head(500).to_dict("records"),
-            columns=[{"name": c, "id": c} for c in sim_df_show.columns],
+            data=sim_df_display.to_dict("records"),
+            columns=[{"name": c, "id": c} for c in sim_df_display.columns],
             page_size=20,
             filter_action="native",
             sort_action="native",
