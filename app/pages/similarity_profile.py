@@ -1822,9 +1822,12 @@ def update_similarity_page(
             top_table_page_size_value = int(top_table_page_size)
         except (TypeError, ValueError):
             top_table_page_size_value = 100
-        top_table_page_size_value = max(1, top_table_page_size_value)
+        top_table_page_size_value = max(1, min(top_table_page_size_value, len(sim_df)))
 
-        top_compare_display = top_compare.copy()
+        # Rebuild the DTW-vs-cosine comparison using the viewer-chosen row count,
+        # independent of the smaller "Top N most similar genes" value used for the plot.
+        top_compare_for_table = make_top_compare(sim_df, top_table_page_size_value)
+        top_compare_display = top_compare_for_table.copy()
         top_compare_display.insert(0, "Rank", np.arange(1, len(top_compare_display) + 1))
 
         top_table = dash_table.DataTable(
@@ -1976,6 +1979,7 @@ def get_current_tables_for_download(
     State("similarity-top-method", "value"),
     State("similarity-upload-gene-list", "contents"),
     State("similarity-upload-gene-list", "filename"),
+    State("similarity-top-table-page-size", "value"),
     prevent_initial_call=True
 )
 def download_top_table(
@@ -1989,7 +1993,8 @@ def download_top_table(
     top_n,
     top_method,
     upload_contents,
-    upload_filename
+    upload_filename,
+    top_table_page_size
 ):
     if not n_clicks:
         return no_update
@@ -2007,11 +2012,21 @@ def download_top_table(
         upload_filename=upload_filename
     )
 
+    try:
+        table_top_n_value = int(top_table_page_size)
+    except (TypeError, ValueError):
+        table_top_n_value = 100
+    table_top_n_value = max(1, min(table_top_n_value, len(sim_df)))
+
+    # Match what is shown on screen: rebuild using the viewer-chosen row count,
+    # not the smaller "Top N most similar genes" value used for the plot.
+    top_compare = make_top_compare(sim_df, table_top_n_value)
+
     filename = (
         f"top_closest_genes_"
         f"{start_time}_to_{end_time}_"
         f"{start_space}_to_{end_space}_"
-        f"Top_{top_n}.csv"
+        f"Top_{table_top_n_value}.csv"
     )
 
     return dcc.send_data_frame(
