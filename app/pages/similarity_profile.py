@@ -1657,14 +1657,13 @@ layout = dbc.Container(
             [
                 dbc.Col(
                     [
-                        html.Label("Rows to display (e.g. 100, 200, 300, ...)"),
+                        html.Label("Total rows to include (e.g. 100, 200, 300, ...); paginated 20 per page"),
                         dbc.Input(
                             id="similarity-top-table-page-size",
                             type="number",
-                            min=10,
-                            step=100,
+                            min=1,
                             value=100,
-                            placeholder="Enter rows to display",
+                            placeholder="Enter total rows to include",
                         ),
                     ],
                     md=3,
@@ -1819,21 +1818,23 @@ def update_similarity_page(
                 upload_status += f" ... and {len(missing_genes) - 10} more."
 
         try:
-            top_table_page_size_value = int(top_table_page_size)
+            top_table_row_count = int(top_table_page_size)
         except (TypeError, ValueError):
-            top_table_page_size_value = 100
-        top_table_page_size_value = max(1, min(top_table_page_size_value, len(sim_df)))
+            top_table_row_count = 100
+        top_table_row_count = max(1, min(top_table_row_count, len(sim_df)))
 
         # Rebuild the DTW-vs-cosine comparison using the viewer-chosen row count,
         # independent of the smaller "Top N most similar genes" value used for the plot.
-        top_compare_for_table = make_top_compare(sim_df, top_table_page_size_value)
+        # The table itself still paginates at a fixed page size (like the full ranking
+        # table below), so it never renders hundreds of rows in one long block.
+        top_compare_for_table = make_top_compare(sim_df, top_table_row_count)
         top_compare_display = top_compare_for_table.copy()
         top_compare_display.insert(0, "Rank", np.arange(1, len(top_compare_display) + 1))
 
         top_table = dash_table.DataTable(
             data=top_compare_display.to_dict("records"),
             columns=[{"name": c, "id": c} for c in top_compare_display.columns],
-            page_size=top_table_page_size_value,
+            page_size=20,
             filter_action="native",
             sort_action="native",
             style_table={"overflowX": "auto"},
