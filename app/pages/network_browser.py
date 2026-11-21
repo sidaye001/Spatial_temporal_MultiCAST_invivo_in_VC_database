@@ -1489,9 +1489,8 @@ layout = dbc.Container(
         html.H2("Network Browser", className="page-title"),
 
         html.P(
-            "Explore the GGM-derived gene network. The first module extracts non-input genes "
-            "that are most connected to the query gene set. The second module shows where the "
-            "query genes are located in the full 3D network map.",
+            "Explore the GGM-derived gene network. This module extracts non-input genes "
+            "that are most connected to the query gene set.",
             className="lead"
         ),
 
@@ -1674,6 +1673,18 @@ layout = dbc.Container(
                     ],
                     md=3,
                 ),
+                dbc.Col(
+                    [
+                        html.Label("Layout seed"),
+                        dbc.Input(
+                            id="network-layout-seed",
+                            type="number",
+                            value=222,
+                            step=1,
+                        ),
+                    ],
+                    md=3,
+                ),
             ],
             className="mb-3",
         ),
@@ -1738,157 +1749,6 @@ layout = dbc.Container(
                 ),
             ],
             className="mb-5",
-        ),
-
-        html.Hr(),
-
-        # ======================================================
-        # PART 2: Full 3D map second
-        # ======================================================
-
-        html.H3("2. Query genes in the full 3D network map"),
-
-        dbc.Alert(
-            [
-                html.Strong("Optional slow module: "),
-                html.Span(
-                    "The full 3D network map can take time to compute and render, especially when many edges are shown. "
-                    "It is turned off by default. Enable it only when you want to inspect query gene positions in the full 3D map."
-                ),
-            ],
-            color="warning",
-            className="mb-2"
-        ),
-
-        dcc.Checklist(
-            id="network-show-full-map",
-            options=[
-                {
-                    "label": "Show Module 2 full 3D network map. This may take time to compute and render.",
-                    "value": "show_full_map",
-                }
-            ],
-            value=[],
-            className="mb-3",
-        ),
-
-        html.Div(
-            id="network-full-map-section",
-            style={"display": "none"},
-            children=[
-                dbc.Alert(
-                    [
-                        html.Strong("How to use this module: "),
-                        html.Span(
-                            "This module shows where the query genes are located in the full 3D GGM network. "
-                            "The query genes are highlighted with larger dots in the color you choose. "
-                            "You can optionally show thick query-connected edges, which makes it easier to see "
-                            "the direct network neighborhood of your gene list."
-                        ),
-                        html.Br(),
-                        html.Br(),
-                        html.Strong("3D layout options: "),
-                        html.Span(
-                            "The Fruchterman-Reingold option uses a force-directed layout similar to R/igraph "
-                            "layout_with_fr(..., dim = 3). The spherical layout distributes nodes on a sphere-like "
-                            "3D map, with high-degree nodes placed slightly more centrally."
-                        ),
-                        html.Br(),
-                        html.Br(),
-                        html.Strong("Rotation option: "),
-                        html.Span(
-                            "Enable 360-degree rotation to add Play/Pause controls to the 3D figure. "
-                            "This is useful for screen recording or exporting a rotating network view."
-                        ),
-                    ],
-                    color="secondary",
-                    className="mb-3"
-                ),
-
-                dbc.Row(
-                    [
-                        dbc.Col(
-                            [
-                                html.Label("Top edges shown in full network"),
-                                dbc.Input(
-                                    id="network-top-edge-number",
-                                    type="number",
-                                    min=100,
-                                    max=20000,
-                                    step=100,
-                                    value=3000,
-                                ),
-                            ],
-                            md=3,
-                        ),
-                        dbc.Col(
-                            [
-                                html.Label("3D layout seed"),
-                                dbc.Input(
-                                    id="network-layout-seed",
-                                    type="number",
-                                    value=222,
-                                    step=1,
-                                ),
-                            ],
-                            md=2,
-                        ),
-                        dbc.Col(
-                            [
-                                html.Label("Full 3D layout algorithm"),
-                                dcc.Dropdown(
-                                    id="network-full-layout-method",
-                                    options=[
-                                        {
-                                            "label": "3D Fruchterman-Reingold force-directed layout",
-                                            "value": "fr",
-                                        },
-                                        {
-                                            "label": "3D spherical layout",
-                                            "value": "sphere",
-                                        },
-                                    ],
-                                    value="fr",
-                                    clearable=False,
-                                ),
-                            ],
-                            md=4,
-                        ),
-                    ],
-                    className="mb-3",
-                ),
-
-                dbc.Row(
-                    [
-                        dbc.Col(
-                            [
-                                html.Label("Full-map display options"),
-                                dcc.Checklist(
-                                    id="network-full-display-options",
-                                    options=[
-                                        {"label": "Show query gene labels", "value": "show_query_labels"},
-                                        {"label": "Show connected edges with query gene list", "value": "show_query_connected_edges"},
-                                        {"label": "Enable 360-degree rotation controls", "value": "rotate_360"},
-                                    ],
-                                    value=["show_query_connected_edges"],
-                                    inline=False,
-                                ),
-                            ],
-                            md=8,
-                        ),
-                    ],
-                    className="mb-3",
-                ),
-
-                dcc.Loading(
-                    type="circle",
-                    children=[
-                        dcc.Graph(id="network-full-3d-plot", style={"width": "100%"})
-                    ],
-                ),
-
-                html.Div(id="network-full-status"),
-            ],
         ),
     ],
     fluid=True
@@ -1993,47 +1853,20 @@ def update_candidate_network(
 
 
 @dash.callback(
-    Output("network-full-map-section", "style"),
-    Input("network-show-full-map", "value"),
-)
-def toggle_full_map_section(show_full_map_values):
-    """Show/hide Module 2 immediately when the checkbox is toggled."""
-    if "show_full_map" in (show_full_map_values or []):
-        return {"display": "block"}
-    return {"display": "none"}
-
-
-@dash.callback(
-    Output("network-full-3d-plot", "figure"),
-    Output("network-full-status", "children"),
     Output("network-query-summary", "children"),
     Output("network-upload-status", "children"),
-    Input("network-show-full-map", "value"),
     Input("network-query-source", "value"),
     Input("network-query-text", "value"),
     Input("network-upload-gene-list", "contents"),
     State("network-upload-gene-list", "filename"),
-    Input("network-query-color", "value"),
-    Input("network-top-edge-number", "value"),
-    Input("network-layout-seed", "value"),
-    Input("network-full-layout-method", "value"),
-    Input("network-full-display-options", "value"),
 )
-def update_full_network(
-    show_full_map_values,
+def update_query_summary(
     query_source,
     query_text,
     upload_contents,
     upload_filename,
-    query_color,
-    top_edge_number,
-    layout_seed,
-    full_layout_method,
-    display_options,
 ):
     try:
-        display_options = display_options or []
-
         query_genes, missing_genes, query_status = get_query_genes(
             query_source=query_source,
             query_text=query_text,
@@ -2049,118 +1882,12 @@ def update_full_network(
 
         upload_status = query_status if query_source == "upload" else ""
 
-        if "show_full_map" not in (show_full_map_values or []):
-            fig = go.Figure()
-            fig.update_layout(
-                template="plotly_white",
-                title="Full 3D network map is disabled",
-                annotations=[
-                    dict(
-                        text="Enable the Module 2 checkbox to compute and display the full 3D map.",
-                        x=0.5,
-                        y=0.5,
-                        showarrow=False,
-                    )
-                ],
-                height=420,
-            )
-            status_children = dbc.Alert(
-                "Module 2 is currently disabled. Turn on the checkbox above to compute the full 3D map; this may take time.",
-                color="warning",
-                className="mt-2",
-            )
-            return fig, status_children, query_summary, upload_status
-
-        show_query_labels = "show_query_labels" in display_options
-        rotate_360 = "rotate_360" in display_options
-        show_query_connected_edges = "show_query_connected_edges" in display_options
-
-        fig, status = make_full_3d_network_figure(
-            query_genes=query_genes,
-            top_edge_number=int(top_edge_number),
-            layout_seed=int(layout_seed),
-            show_query_labels=show_query_labels,
-            query_color=query_color,
-            rotate_360=rotate_360,
-            show_query_connected_edges=show_query_connected_edges,
-            full_layout_method=full_layout_method,
-        )
-
-        layout_text = (
-            "3D spherical layout is used."
-            if full_layout_method == "sphere"
-            else "3D Fruchterman-Reingold force-directed layout is used."
-        )
-
-        edge_text = (
-            "Query-connected edges are shown."
-            if show_query_connected_edges
-            else "Query-connected edges are not forced into the display."
-        )
-
-        rotation_text = (
-            "360-degree rotation controls are enabled."
-            if rotate_360
-            else "360-degree rotation controls are disabled."
-        )
-
-        status_children = [
-            dbc.Alert(
-                [
-                    html.Strong("Full-network display summary: "),
-                    f"{status['displayed_node_count']} nodes and "
-                    f"{status['displayed_edge_count']} edges are displayed. "
-                    f"{len(status['query_shown'])}/{len(query_genes)} query genes are present in the displayed map. ",
-                    html.Br(),
-                    layout_text,
-                    " ",
-                    edge_text,
-                    " ",
-                    rotation_text,
-                ],
-                color="info",
-                className="mt-3"
-            )
-        ]
-
-        if status["query_missing_from_displayed"]:
-            missing_labels = [
-                f"{gene_label(g)} ({g})"
-                for g in status["query_missing_from_displayed"][:10]
-            ]
-
-            status_children.append(
-                dbc.Alert(
-                    [
-                        html.Strong("Some query genes were not shown in the filtered 3D map: "),
-                        ", ".join(missing_labels),
-                        html.Br(),
-                        "Try increasing the number of top edges shown or enabling query-connected edges."
-                    ],
-                    color="warning"
-                )
-            )
-
-        return fig, html.Div(status_children), query_summary, upload_status
+        return query_summary, upload_status
 
     except Exception as e:
-        fig = go.Figure()
-        fig.update_layout(
-            template="plotly_white",
-            title="Error",
-            annotations=[
-                dict(
-                    text=str(e),
-                    x=0.5,
-                    y=0.5,
-                    showarrow=False
-                )
-            ]
-        )
-
         alert = dbc.Alert(str(e), color="danger", className="mt-2")
 
-        return fig, alert, alert, ""
+        return alert, ""
 
 
 @dash.callback(
