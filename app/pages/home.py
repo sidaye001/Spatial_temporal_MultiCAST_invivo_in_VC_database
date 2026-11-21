@@ -188,7 +188,7 @@ layout = dbc.Container(
                 ),
                 module_item(
                     "Cofitness",
-                    "Explore pairwise cofitness correlations, heatmaps, and top positively or negatively correlated partner genes.",
+                    "Explore pairwise cofitness correlations and top positively or negatively correlated partner genes.",
                     "/cofitness",
                 ),
                 module_item(
