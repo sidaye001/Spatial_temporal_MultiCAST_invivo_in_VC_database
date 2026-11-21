@@ -840,7 +840,7 @@ def make_top_heatmap_figure(rank_table, feature_matrix, feature_order, top_n=30)
             customdata=cd,
             colorscale=BROWN_BLUE_SCALE,
             zmid=0,
-            colorbar=dict(title="Raw Beta/logFC"),
+            colorbar=dict(title="Beta"),
             hovertemplate=(
                 "GeneName: %{customdata[0]}<br>"
                 "Gene ID: %{customdata[1]}<br>"
