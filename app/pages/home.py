@@ -221,24 +221,6 @@ layout = dbc.Container(
                     dbc.Card(
                         dbc.CardBody(
                             [
-                                html.H4("AI Prediction", style=SECTION_TITLE_STYLE),
-                                html.P(
-                                    "The AI Prediction page is reserved for future predictive modules. "
-                                    "The current public functionality is focused on interactive exploration, "
-                                    "profile comparison, clustering, and network browsing.",
-                                    style={"marginBottom": "0"},
-                                ),
-                            ]
-                        ),
-                        style=CARD_STYLE,
-                    ),
-                    md=6,
-                    className="mb-4",
-                ),
-                dbc.Col(
-                    dbc.Card(
-                        dbc.CardBody(
-                            [
                                 html.H4("Citation", style=SECTION_TITLE_STYLE),
                                 html.P(
                                     "If you use this database, please cite the corresponding publication or contact mwaldor at bwh dot harvard dot edu",

@@ -72,16 +72,6 @@ Features include:
 - Top matched genes
 - Downloadable similarity tables
 
-## AI Prediction
-Placeholder module for future AI/ML-based prediction models.
-
-Planned directions include:
-- Functional prediction
-- Latent representation learning
-- Environment-aware prediction
-- Transfer learning models
-- AI-based fitness inference
-
 ---
 
 # Repository Structure
@@ -99,8 +89,7 @@ gene_fitness_dash/
 │   │   ├── clustering.py
 │   │   ├── similarity_profile.py
 │   │   ├── network_browser.py
-│   │   ├── predefined_pattern.py
-│   │   └── ai_prediction.py
+│   │   └── predefined_pattern.py
 │   └── assets/
 │
 ├── data/
