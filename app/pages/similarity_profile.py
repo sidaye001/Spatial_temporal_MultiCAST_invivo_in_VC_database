@@ -1041,7 +1041,7 @@ def make_temporal_figure(
                         f"Gene ID: {gene}<br>"
                         f"VC_ID: {vc_id}<br>"
                         f"Space: {space}<br>"
-                        "logFC: %{y:.3f}<extra></extra>"
+                        "Beta: %{y:.3f}<extra></extra>"
                     ),
                 ),
                 row=row,
@@ -1092,7 +1092,7 @@ def make_temporal_figure(
                             f"Gene ID: {gene_id}<br>"
                             f"VC_ID: {vc_id}<br>"
                             f"Space: {space}<br>"
-                            "logFC: %{y:.3f}<extra></extra>"
+                            "Beta: %{y:.3f}<extra></extra>"
                         ),
                     ),
                     row=row,
@@ -1144,7 +1144,7 @@ def make_temporal_figure(
                 hovertemplate=(
                     query_hover_prefix +
                     f"Space: {space}<br>"
-                    "logFC: %{y:.3f}<extra></extra>"
+                    "Beta: %{y:.3f}<extra></extra>"
                 ),
             ),
             row=row,
@@ -1176,7 +1176,7 @@ def make_temporal_figure(
         margin=dict(l=40, r=40, t=90, b=70)
     )
 
-    fig.update_yaxes(title_text="logFC")
+    fig.update_yaxes(title_text="Beta")
     fig.update_xaxes(title_text="Time")
 
     return fig
@@ -1249,7 +1249,7 @@ def make_spatial_figure(
                         f"Gene ID: {gene}<br>"
                         f"VC_ID: {vc_id}<br>"
                         f"Time: {time}<br>"
-                        "logFC: %{y:.3f}<extra></extra>"
+                        "Beta: %{y:.3f}<extra></extra>"
                     ),
                 ),
                 row=row,
@@ -1300,7 +1300,7 @@ def make_spatial_figure(
                             f"Gene ID: {gene_id}<br>"
                             f"VC_ID: {vc_id}<br>"
                             f"Time: {time}<br>"
-                            "logFC: %{y:.3f}<extra></extra>"
+                            "Beta: %{y:.3f}<extra></extra>"
                         ),
                     ),
                     row=row,
@@ -1352,7 +1352,7 @@ def make_spatial_figure(
                 hovertemplate=(
                     query_hover_prefix +
                     f"Time: {time}<br>"
-                    "logFC: %{y:.3f}<extra></extra>"
+                    "Beta: %{y:.3f}<extra></extra>"
                 ),
             ),
             row=row,
@@ -1385,7 +1385,7 @@ def make_spatial_figure(
         margin=dict(l=40, r=40, t=90, b=120)
     )
 
-    fig.update_yaxes(title_text="logFC")
+    fig.update_yaxes(title_text="Beta")
     fig.update_xaxes(title_text="Space")
 
     return fig

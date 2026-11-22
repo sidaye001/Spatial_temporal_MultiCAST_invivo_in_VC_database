@@ -783,7 +783,7 @@ def make_top_gene_curve_figure(
             ticktext=feature_order,
             tickangle=90,
         ),
-        yaxis=dict(title="Scaled logFC / scaled trend"),
+        yaxis=dict(title="Scaled Beta / scaled trend"),
         margin=dict(l=60, r=30, t=80, b=140),
     )
     return fig
@@ -846,12 +846,12 @@ def make_top_heatmap_figure(rank_table, feature_matrix, feature_order, top_n=30)
                 "Gene ID: %{customdata[1]}<br>"
                 "VC_ID: %{customdata[2]}<br>"
                 "Feature: %{x}<br>"
-                "Raw Beta/logFC: %{z:.3f}<extra></extra>"
+                "Beta: %{z:.3f}<extra></extra>"
             ),
         )
     )
     fig.update_layout(
-        title=f"Top {len(labels)} genes heatmap ranked by DTW distance; color = raw Beta/logFC",
+        title=f"Top {len(labels)} genes heatmap ranked by DTW distance; color = Beta",
         template="plotly_white",
         height=max(520, 24 * len(labels) + 180),
         xaxis=dict(title="Selected time-space feature", tickangle=90),

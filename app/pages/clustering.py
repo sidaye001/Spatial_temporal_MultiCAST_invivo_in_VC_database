@@ -809,7 +809,7 @@ def make_faceted_profile_figure(
                         f"VC_ID: {vc_id}<br>"
                         f"Cluster: {c}<br>"
                         f"{x_title}: %{{x}}<br>"
-                        "logFC: %{y:.3f}<extra></extra>"
+                        "Beta: %{y:.3f}<extra></extra>"
                     ),
                     showlegend=False,
                 ),
@@ -831,7 +831,7 @@ def make_faceted_profile_figure(
                     hovertemplate=(
                         f"Cluster {c}<br>"
                         f"{x_title}: %{{x}}<br>"
-                        "Median logFC: %{y:.3f}<extra></extra>"
+                        "Median Beta: %{y:.3f}<extra></extra>"
                     ),
                     name="Cluster median",
                     showlegend=(idx == 0),
@@ -853,7 +853,7 @@ def make_faceted_profile_figure(
             mirror=True,
         )
         fig.update_yaxes(
-            title_text="logFC" if col == 1 else "",
+            title_text="Beta" if col == 1 else "",
             range=y_range if fixed_y_axis else None,
             row=row,
             col=col,
@@ -923,7 +923,7 @@ def make_global_3d_cluster_figure(all_tb, display_times=None, display_spaces=Non
                 line=dict(width=4),
                 name=f"Cluster {c}",
                 text=[
-                    f"Cluster {c}<br>Time: {t}<br>Space: {s}<br>Median logFC: {z:.3f}"
+                    f"Cluster {c}<br>Time: {t}<br>Space: {s}<br>Median Beta: {z:.3f}"
                     for t, s, z in zip(sub["Time"], sub["Space"], sub["logFC"])
                 ],
                 hoverinfo="text",
@@ -937,7 +937,7 @@ def make_global_3d_cluster_figure(all_tb, display_times=None, display_spaces=Non
         scene=dict(
             xaxis=dict(title="Time", tickmode="array", tickvals=[TIME_NUM_MAP[t] for t in display_times], ticktext=display_times),
             yaxis=dict(title="GI tract location", tickmode="array", tickvals=[SPACE_NUM_MAP[s] for s in display_spaces], ticktext=display_spaces),
-            zaxis=dict(title="Median logFC"),
+            zaxis=dict(title="Median Beta"),
             camera=dict(eye=dict(x=1.8, y=1.8, z=1.2)),
         ),
         margin=dict(l=0, r=0, t=90, b=0),
